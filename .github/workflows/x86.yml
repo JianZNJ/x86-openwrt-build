@@ -114,14 +114,6 @@ jobs:
             echo "::warning::$MISS package(s) not enabled"
           fi
 
-      - name: Restore ccache
-        uses: actions/cache@v4
-        with:
-          path: /workdir/openwrt/.ccache
-          key: x86-ccache-${{ github.run_id }}
-          restore-keys: |
-            x86-ccache-
-
       - name: Download packages
         run: |
           cd openwrt
@@ -132,7 +124,7 @@ jobs:
         run: |
           cd openwrt
           echo "$(nproc) threads"
-          make -j$(nproc) || make -j1 V=s
+          make -j$(nproc) V=s
 
       - name: Collect artifacts
         run: |
