@@ -96,6 +96,7 @@ jobs:
           for p in \
             luci-app-openclash luci-app-lucky luci-app-oaf \
             adblock-fast banip luci-app-banip vlmcsd luci-app-vlmcsd \
+            samba4-server luci-app-samba4 luci-app-wechatpush luci-app-argon-config \
             kmod-nft-fullcone luci-app-dockerman docker dockerd containerd runc \
             xl2tpd strongswan-default luci-proto-wireguard wireguard-tools kmod-wireguard \
             luci-app-ttyd luci-app-arpbind luci-app-wol luci-app-upnp \

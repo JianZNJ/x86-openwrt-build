@@ -20,5 +20,11 @@ git clone --depth 1 https://github.com/destan19/OpenAppFilter.git package/OpenAp
 echo "    内容:"
 ls -1 package/OpenAppFilter
 
+echo "==> 克隆 luci-app-wechatpush（Server酱 / 微信 / Telegram 推送）"
+rm -rf package/luci-app-wechatpush
+git clone --depth 1 https://github.com/tty228/luci-app-wechatpush.git package/luci-app-wechatpush
+echo "    内容:"
+ls -1 package/luci-app-wechatpush
+
 echo "==> 当前 feeds:"
 cat feeds.conf.default
