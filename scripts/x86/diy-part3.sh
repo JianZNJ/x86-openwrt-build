@@ -213,3 +213,104 @@ uci commit firewall
 exit 0
 EOF
 chmod +x files/etc/uci-defaults/92-wireguard
+# ============================================================
+# OTA-UI: fw-ota 的 LuCI 界面
+# ============================================================
+echo "==> Install fw-ota LuCI page"
+mkdir -p files/usr/share/luci/menu.d files/usr/share/rpcd/acl.d files/www/luci-static/resources/view
+cat > files/usr/share/luci/menu.d/luci-app-fw-ota.json <<'EOF'
+{
+	"admin/system/fw-ota": {
+		"title": "固件升级 (OTA)",
+		"order": 60,
+		"action": {
+			"type": "view",
+			"path": "fw-ota"
+		},
+		"depends": {
+			"acl": [ "luci-app-fw-ota" ]
+		}
+	}
+}
+EOF
+cat > files/usr/share/rpcd/acl.d/luci-app-fw-ota.json <<'EOF'
+{
+	"luci-app-fw-ota": {
+		"description": "Grant access to fw-ota",
+		"read": {
+			"file": {
+				"/usr/sbin/fw-ota": [ "exec" ]
+			}
+		},
+		"write": {
+			"file": {
+				"/usr/sbin/fw-ota": [ "exec" ]
+			}
+		}
+	}
+}
+EOF
+cat > files/www/luci-static/resources/view/fw-ota.js <<'EOF'
+'use strict';
+'require view';
+'require form';
+'require fs';
+'require ui';
+
+return view.extend({
+	load: function() {
+		return fs.exec('/usr/sbin/fw-ota', [ 'version' ]).catch(function() {
+			return { stdout: '', stderr: '' };
+		});
+	},
+
+	handleRun: function(arg) {
+		var node = document.getElementById('ota-out');
+		node.textContent = '执行中，请稍候...';
+		return fs.exec('/usr/sbin/fw-ota', [ arg ]).then(function(res) {
+			node.textContent = (res.stdout || '') + (res.stderr ? '\n' + res.stderr : '');
+		}).catch(function(e) {
+			node.textContent = '执行失败: ' + e.message;
+		});
+	},
+
+	render: function(res) {
+		var self = this;
+		var ver = (res.stdout || '').trim() || '未知';
+
+		return E('div', { 'class': 'cbi-map' }, [
+			E('h2', {}, _('固件 OTA 升级')),
+			E('div', { 'class': 'cbi-map-descr' },
+				_('从 GitHub Release 检查并升级固件。升级会重启设备，请确保网络稳定。')),
+
+			E('div', { 'class': 'cbi-section' }, [
+				E('p', {}, [ E('strong', {}, _('当前版本：')), ver ]),
+				E('div', { 'class': 'cbi-page-actions' }, [
+					E('button', {
+						'class': 'btn cbi-button cbi-button-action',
+						'click': ui.createHandlerFn(self, 'handleRun', 'check')
+					}, [ _('检查更新') ]),
+					' ',
+					E('button', {
+						'class': 'btn cbi-button cbi-button-apply',
+						'click': ui.createHandlerFn(self, 'handleRun', 'update')
+					}, [ _('立即升级并重启') ])
+				])
+			]),
+
+			E('div', { 'class': 'cbi-section' }, [
+				E('h3', {}, _('输出')),
+				E('pre', {
+					'id': 'ota-out',
+					'style': 'white-space:pre-wrap;background:#f5f5f5;padding:10px;border-radius:4px;min-height:80px'
+				}, [ '' ])
+			])
+		]);
+	},
+
+	handleSaveApply: null,
+	handleSave: null,
+	handleReset: null
+});
+EOF
+chmod 644 files/usr/share/luci/menu.d/luci-app-fw-ota.json files/usr/share/rpcd/acl.d/luci-app-fw-ota.json files/www/luci-static/resources/view/fw-ota.js
