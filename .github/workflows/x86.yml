@@ -50,7 +50,7 @@ jobs:
         run: |
           sudo apt-get update
           curl -s https://raw.githubusercontent.com/immortalwrt/build-scripts/master/init_build_environment.sh | sudo bash
-          sudo apt-get install -y rename pigz libfuse-dev upx subversion clang lua5.1 liblua5.1-0-dev
+          sudo apt-get install -y rename pigz libfuse-dev upx subversion clang lua5.1 liblua5.1-0-dev ccache
           sudo timedatectl set-timezone "$TZ"
           git config --global user.email "${GITHUB_ACTOR}@users.noreply.github.com"
           git config --global user.name "$GITHUB_ACTOR"
@@ -113,6 +113,14 @@ jobs:
           if [ "$MISS" -gt 0 ]; then
             echo "::warning::$MISS package(s) not enabled"
           fi
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: /workdir/openwrt/.ccache
+          key: x86-ccache-${{ github.run_id }}
+          restore-keys: |
+            x86-ccache-
 
       - name: Download packages
         run: |
