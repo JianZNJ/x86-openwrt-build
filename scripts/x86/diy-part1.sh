@@ -28,3 +28,11 @@ ls -1 package/luci-app-wechatpush
 
 echo "==> 当前 feeds:"
 cat feeds.conf.default
+echo "==> Clone wtbwmon (backend + luci app)"
+rm -rf package/luci-app-wrtbwmon package/wrtbwmon
+git clone --depth 1 https://github.com/brvphoenix/wrtbwmon.git package/wrtbwmon
+git clone --depth 1 https://github.com/brvphoenix/luci-app-wrtbwmon.git /tmp/wbw-luci
+cp -r /tmp/wbw-luci/luci-app-wrtbwmon package/luci-app-wrtbwmon
+rm -rf /tmp/wbw-luci
+echo "    wrtbwmon:"; ls -1 package/wrtbwmon
+echo "    luci-app-wrtbwmon:"; ls -1 package/luci-app-wrtbwmon
