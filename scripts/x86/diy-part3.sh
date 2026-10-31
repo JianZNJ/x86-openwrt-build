@@ -109,6 +109,22 @@ cat > files/etc/crontabs/root <<'EOF'
 EOF
 chmod 600 files/etc/crontabs/root
 
-echo "==> 9. 生成的自定义文件"
+echo "==> 9. 预置 OpenClash 内核（mihomo meta, linux-amd64）"
+CORE_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64.tar.gz"
+mkdir -p files/etc/openclash/core
+CORE_TMP=$(mktemp -d)
+if curl -fsSL --retry 3 --connect-timeout 20 -o "$CORE_TMP/core.tar.gz" "$CORE_URL"; then
+  if tar -xzf "$CORE_TMP/core.tar.gz" -C "$CORE_TMP" && [ -f "$CORE_TMP/clash" ]; then
+    install -m 0755 "$CORE_TMP/clash" files/etc/openclash/core/clash_meta
+    echo "    内核已安装: $(du -h files/etc/openclash/core/clash_meta | cut -f1)"
+  else
+    echo "    WARN 解压失败或未找到 clash 二进制，跳过"
+  fi
+else
+  echo "    WARN 内核下载失败，跳过（首次启动需在 UI 手动下载）"
+fi
+rm -rf "$CORE_TMP"
+
+echo "==> 10. 生成的自定义文件"
 find files -type f | sed 's/^/    /'
 echo "==> diy-part3 完成"
