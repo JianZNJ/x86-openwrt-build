@@ -128,3 +128,88 @@ rm -rf "$CORE_TMP"
 echo "==> 10. 生成的自定义文件"
 find files -type f | sed 's/^/    /'
 echo "==> diy-part3 完成"
+# ============================================================
+# SECURITY-PRESET: banip / adblock-fast / WireGuard 固化为出厂配置
+# ============================================================
+echo "==> Preset banip"
+cat > files/etc/uci-defaults/90-banip <<'EOF'
+#!/bin/sh
+uci set banip.global.ban_enabled=1
+uci set banip.global.ban_autodetect=1
+uci set banip.global.ban_logchain=1
+uci set banip.global.ban_icmplimit=10
+uci set banip.global.ban_synlimit=10
+uci set banip.global.ban_nftexpiry=1d
+uci set banip.global.ban_logexpiry=1d
+uci -q delete banip.global.ban_feed
+uci add_list banip.global.ban_feed=dshield
+uci add_list banip.global.ban_feed=threat
+uci add_list banip.global.ban_feed=greensnow
+uci add_list banip.global.ban_feed=firehol1
+uci -q delete banip.global.ban_logterm
+uci add_list banip.global.ban_logterm='Exit before auth from'
+uci add_list banip.global.ban_logterm='luci: failed login'
+uci add_list banip.global.ban_logterm='error: maximum authentication attempts exceeded'
+uci add_list banip.global.ban_logterm='pam_unix(sshd:auth): authentication failure'
+uci commit banip
+/etc/init.d/banip enable
+/etc/init.d/banip restart
+exit 0
+EOF
+chmod +x files/etc/uci-defaults/90-banip
+
+echo "==> Preset adblock-fast"
+cat > files/etc/uci-defaults/91-adblock <<'EOF'
+#!/bin/sh
+uci set adblock-fast.config.enabled=1
+for i in 0 1 2 3 4 5 6 7 8; do
+  uci -q get adblock-fast.@file_url[$i] >/dev/null 2>&1 && uci set adblock-fast.@file_url[$i].enabled=1
+done
+for i in 0 1 2 3 4 5 6 7 8; do
+  uci -q get adblock-fast.@domains[$i] >/dev/null 2>&1 && uci set adblock-fast.@domains[$i].enabled=1
+done
+uci commit adblock-fast
+/etc/init.d/adblock-fast enable
+exit 0
+EOF
+chmod +x files/etc/uci-defaults/91-adblock
+
+echo "==> Preset WireGuard (wg0 server + one client)"
+cat > files/etc/uci-defaults/92-wireguard <<'EOF'
+#!/bin/sh
+uci -q delete network.wg0
+uci set network.wg0=interface
+uci set network.wg0.proto=wireguard
+uci set network.wg0.private_key='EAm9Cm2wooYpd/xpuky6qAxrFAKy5Kc2Qk14IGFiyn0='
+uci set network.wg0.listen_port=51820
+uci add_list network.wg0.addresses=10.88.0.1/24
+uci -q delete network.wgclient
+uci set network.wgclient=wireguard_wg0
+uci set network.wgclient.description=phone
+uci set network.wgclient.public_key='JraFfdnEaW4VG3z/bzyfKHUj0cKR8K5M/12dwYBj2Uw='
+uci set network.wgclient.preshared_key='XhH/j3rMTRzsfrFQG6EFLpO+5ZdB1NjdmTBe9OYbYBA='
+uci add_list network.wgclient.allowed_ips=10.88.0.2/32
+uci commit network
+uci -q delete firewall.wg
+uci set firewall.wg=zone
+uci set firewall.wg.name=wg
+uci set firewall.wg.input=ACCEPT
+uci set firewall.wg.output=ACCEPT
+uci set firewall.wg.forward=ACCEPT
+uci set firewall.wg.masq=1
+uci set firewall.wg.network=wg0
+uci -q delete firewall.wg_fwd
+uci set firewall.wg_fwd=forwarding
+uci set firewall.wg_fwd.src=wg
+uci set firewall.wg_fwd.dest=wan
+uci -q delete firewall.wg_allow
+uci set firewall.wg_allow=rule
+uci set firewall.wg_allow.name=Allow-WireGuard
+uci set firewall.wg_allow.src=wan
+uci set firewall.wg_allow.proto=udp
+uci set firewall.wg_allow.dest_port=51820
+uci set firewall.wg_allow.target=ACCEPT
+uci commit firewall
+exit 0
+EOF
+chmod +x files/etc/uci-defaults/92-wireguard
