@@ -110,10 +110,22 @@ EOF
 chmod 600 files/etc/crontabs/root
 
 echo "==> 9. 预置 OpenClash 内核（mihomo meta, linux-amd64）"
-CORE_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64-compatible.tar.gz"
 mkdir -p files/etc/openclash/core
 CORE_TMP=$(mktemp -d)
-if curl -fsSL --retry 3 --connect-timeout 20 -o "$CORE_TMP/core.tar.gz" "$CORE_URL"; then
+CORE_OK=0
+for u in \
+  "https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64-compatible.tar.gz" \
+  "https://cdn.jsdelivr.net/gh/vernesong/OpenClash@core/meta/clash-linux-amd64-compatible.tar.gz" \
+  "https://ghproxy.net/https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64-compatible.tar.gz" \
+  "https://mirror.ghproxy.com/https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64-compatible.tar.gz" ; do
+  echo "    trying: $u"
+  if curl -fsSL --retry 2 --connect-timeout 20 --max-time 180 -o "$CORE_TMP/core.tar.gz" "$u"; then
+    CORE_OK=1
+    echo "    downloaded from: $u"
+    break
+  fi
+done
+if [ "$CORE_OK" = "1" ]; then
   if tar -xzf "$CORE_TMP/core.tar.gz" -C "$CORE_TMP" && [ -f "$CORE_TMP/clash" ]; then
     install -m 0755 "$CORE_TMP/clash" files/etc/openclash/core/clash_meta
     echo "    内核已安装: $(du -h files/etc/openclash/core/clash_meta | cut -f1)"
