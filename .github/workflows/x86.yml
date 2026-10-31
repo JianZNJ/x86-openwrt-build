@@ -1,0 +1,155 @@
+name: x86 build
+
+on:
+  workflow_dispatch:
+  repository_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: openwrt-24.10
+  CONFIG_FILE: ./config/x86.config
+  DIY_P1_SH: ./scripts/x86/diy-part1.sh
+  DIY_P2_SH: ./scripts/x86/diy-part2.sh
+  DIY_P3_SH: ./scripts/x86/diy-part3.sh
+  UPLOAD_BIN_DIR: true
+  TZ: Asia/Shanghai
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup build environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          curl -s https://raw.githubusercontent.com/immortalwrt/build-scripts/master/init_build_environment.sh | sudo bash
+          sudo apt-get install -y rename pigz libfuse-dev upx subversion clang lua5.1 liblua5.1-0-dev
+          sudo timedatectl set-timezone "$TZ"
+          git config --global user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+          git config --global user.name "$GITHUB_ACTOR"
+          sudo mkdir -p /workdir
+          sudo chown "$USER:$GROUPS" /workdir
+
+      - name: Clone source code
+        working-directory: /workdir
+        run: |
+          git clone --depth 1 "$REPO_URL" -b "$REPO_BRANCH" openwrt
+          ln -sf /workdir/openwrt "$GITHUB_WORKSPACE/openwrt"
+
+      - name: Load custom feeds (diy-part1)
+        run: |
+          chmod +x "$DIY_P1_SH"
+          cd openwrt
+          bash "$GITHUB_WORKSPACE/$DIY_P1_SH"
+
+      - name: Update feeds
+        run: cd openwrt && ./scripts/feeds update -a
+
+      - name: Modify feeds (diy-part2)
+        run: |
+          chmod +x "$DIY_P2_SH"
+          cd openwrt
+          bash "$GITHUB_WORKSPACE/$DIY_P2_SH"
+
+      - name: Install feeds
+        run: cd openwrt && ./scripts/feeds install -a
+
+      - name: Load custom configuration (diy-part3)
+        run: |
+          chmod +x "$DIY_P3_SH"
+          cp "$CONFIG_FILE" openwrt/.config
+          cd openwrt
+          bash "$GITHUB_WORKSPACE/$DIY_P3_SH"
+          make defconfig
+
+      - name: Verify requested packages
+        run: |
+          cd openwrt
+          MISS=0
+          for p in \
+            luci-app-openclash luci-app-lucky luci-app-oaf \
+            luci-app-adguardhome adblock-fast banip luci-app-banip \
+            kmod-nft-fullcone luci-app-dockerman docker dockerd containerd runc \
+            xl2tpd strongswan-default luci-proto-wireguard wireguard-tools kmod-wireguard \
+            luci-app-ttyd luci-app-arpbind luci-app-wol luci-app-upnp \
+            luci-app-nlbwmon luci-app-diskman luci-theme-argon luci-theme-design \
+            dnsmasq-full kmod-tcp-bbr irqbalance; do
+            if grep -q "^CONFIG_PACKAGE_${p}=y" .config; then
+              echo "OK    $p"
+            else
+              echo "MISS  $p"
+              MISS=$((MISS+1))
+            fi
+          done
+          echo "---- missing: $MISS ----"
+          if [ "$MISS" -gt 0 ]; then
+            echo "::warning::$MISS package(s) not enabled"
+          fi
+
+      - name: Download packages
+        run: |
+          cd openwrt
+          make download -j8 || make download -j1 V=s
+          find dl -size -1024c -exec rm -f {} \;
+
+      - name: Compile firmware
+        run: |
+          cd openwrt
+          echo "$(nproc) threads"
+          make -j$(nproc) || make -j1 V=s
+
+      - name: Collect artifacts
+        run: |
+          cd openwrt/bin/targets/*/*
+          ls -lh
+          rm -rf packages
+          mkdir -p /tmp/fw
+          cp -a . /tmp/fw/
+          echo "FIRMWARE=$PWD" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: x86-firmware
+          path: /tmp/fw
+
+      - name: Create release
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: x86-${{ github.run_number }}
+          name: x86 OpenWrt build ${{ github.run_number }}
+          prerelease: true
+          body: |
+            ### x86_64 OpenWrt (immortalwrt 24.10)
+            - 默认地址 `192.168.2.1` / 密码 `password`
+            - NAT1 FullCone / OpenClash / OAF / AdGuardHome / banip / L2TP + WireGuard / Docker
+            - 刷机：`*-combined-efi.img.gz` 用于 UEFI 启动盘
+          files: |
+            /tmp/fw/*.img.gz
+            /tmp/fw/*.manifest
+            /tmp/fw/sha256sums
