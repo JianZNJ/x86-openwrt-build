@@ -221,6 +221,15 @@ uci set firewall.wg_allow.src=wan
 uci set firewall.wg_allow.proto=udp
 uci set firewall.wg_allow.dest_port=51820
 uci set firewall.wg_allow.target=ACCEPT
+# WireGuard 到局域网的双向转发（关键：否则 VPN 客户端只能访问路由器，访问不了内网设备）
+uci -q delete firewall.wg_lan
+uci set firewall.wg_lan=forwarding
+uci set firewall.wg_lan.src=wg
+uci set firewall.wg_lan.dest=lan
+uci -q delete firewall.lan_to_wg
+uci set firewall.lan_to_wg=forwarding
+uci set firewall.lan_to_wg.src=lan
+uci set firewall.lan_to_wg.dest=wg
 uci commit firewall
 exit 0
 EOF
