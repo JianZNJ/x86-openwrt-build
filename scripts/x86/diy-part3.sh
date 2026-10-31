@@ -180,14 +180,14 @@ cat > files/etc/uci-defaults/92-wireguard <<'EOF'
 uci -q delete network.wg0
 uci set network.wg0=interface
 uci set network.wg0.proto=wireguard
-uci set network.wg0.private_key='EAm9Cm2wooYpd/xpuky6qAxrFAKy5Kc2Qk14IGFiyn0='
+uci set network.wg0.private_key='${WG_SRV_PRIV}'
 uci set network.wg0.listen_port=51820
 uci add_list network.wg0.addresses=10.88.0.1/24
 uci -q delete network.wgclient
 uci set network.wgclient=wireguard_wg0
 uci set network.wgclient.description=phone
-uci set network.wgclient.public_key='JraFfdnEaW4VG3z/bzyfKHUj0cKR8K5M/12dwYBj2Uw='
-uci set network.wgclient.preshared_key='XhH/j3rMTRzsfrFQG6EFLpO+5ZdB1NjdmTBe9OYbYBA='
+uci set network.wgclient.public_key='${WG_CLI_PUB}'
+uci set network.wgclient.preshared_key='${WG_PSK}'
 uci add_list network.wgclient.allowed_ips=10.88.0.2/32
 uci commit network
 uci -q delete firewall.wg

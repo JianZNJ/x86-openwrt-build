@@ -12,6 +12,9 @@ permissions:
   actions: write
 
 env:
+  WG_SRV_PRIV: ${{ secrets.WG_SRV_PRIV }}
+  WG_CLI_PUB: ${{ secrets.WG_CLI_PUB }}
+  WG_PSK: ${{ secrets.WG_PSK }}
   REPO_URL: https://github.com/immortalwrt/immortalwrt
   REPO_BRANCH: openwrt-24.10
   CONFIG_FILE: ./config/x86.config
