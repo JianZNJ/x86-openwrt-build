@@ -74,12 +74,28 @@ exit 0
 EOF
 chmod +x files/etc/uci-defaults/98-firewall-tune
 
-echo "==> 5. 版本标识"
+echo "==> 5. 版本标识 + 构建号"
 if [ -f package/base-files/files/etc/openwrt_release ]; then
   sed -i "s/DISTRIB_DESCRIPTION='*.*'/DISTRIB_DESCRIPTION='x86 N3710 NAT1 build $(date +%Y%m%d)'/g" \
     package/base-files/files/etc/openwrt_release || true
 fi
+mkdir -p files/etc
+echo "${GITHUB_RUN_NUMBER:-0}" > files/etc/fw-version
+echo "    构建号: $(cat files/etc/fw-version)"
 
-echo "==> 6. 生成的自定义文件"
+echo "==> 6. 安装 OTA 工具 fw-ota"
+mkdir -p files/usr/sbin
+install -m 0755 "$GITHUB_WORKSPACE/scripts/x86/fw-ota.sh" files/usr/sbin/fw-ota
+echo "    $(wc -c < files/usr/sbin/fw-ota) 字节"
+
+echo "==> 7. 每周检查更新（只检查，不自动刷）"
+mkdir -p files/etc/crontabs
+cat > files/etc/crontabs/root <<'EOF'
+# 每周六 04:00 检查固件更新，结果写入 /var/log/fw-ota.log
+0 4 * * 6 /usr/sbin/fw-ota check >> /var/log/fw-ota.log 2>&1
+EOF
+chmod 600 files/etc/crontabs/root
+
+echo "==> 8. 生成的自定义文件"
 find files -type f | sed 's/^/    /'
 echo "==> diy-part3 完成"

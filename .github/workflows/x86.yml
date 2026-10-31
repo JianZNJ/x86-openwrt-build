@@ -1,6 +1,9 @@
 name: x86 build
 
 on:
+  schedule:
+    # 每周五 18:00 UTC = 周六 02:00 北京时间
+    - cron: '0 18 * * 5'
   workflow_dispatch:
   repository_dispatch:
 
