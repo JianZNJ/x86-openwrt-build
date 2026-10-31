@@ -127,7 +127,7 @@ jobs:
         run: |
           cd openwrt
           echo "$(nproc) threads"
-          timeout 10800 make -j$(nproc)
+          timeout 18000 make -j$(nproc)
 
       - name: Collect artifacts
         run: |
