@@ -187,7 +187,7 @@ EOF
 chmod +x files/etc/uci-defaults/91-adblock
 
 echo "==> Preset WireGuard (wg0 server + one client)"
-cat > files/etc/uci-defaults/92-wireguard <<'EOF'
+cat > files/etc/uci-defaults/92-wireguard <<EOF
 #!/bin/sh
 uci -q delete network.wg0
 uci set network.wg0=interface
@@ -359,3 +359,12 @@ uci commit nlbwmon
 exit 0
 EOF
 chmod +x files/etc/uci-defaults/93-nlbwmon
+# ============================================================
+# WG_KEY_CHECK: 校验密钥确实被注入（否则 heredoc 引号问题会静默失败）
+# ============================================================
+if grep -q '\${WG_SRV_PRIV}' files/etc/uci-defaults/92-wireguard 2>/dev/null; then
+  echo "    ERROR: WG_SRV_PRIV 未被替换！heredoc 引号有问题"
+  echo "    请检查 GitHub Secrets 是否配置"
+else
+  echo "    WireGuard 密钥注入 OK"
+fi
