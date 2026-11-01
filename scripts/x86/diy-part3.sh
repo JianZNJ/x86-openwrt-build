@@ -74,11 +74,12 @@ exit 0
 EOF
 chmod +x files/etc/uci-defaults/96-vlmcsd
 
-echo "==> 5. 关闭 flow offloading（OAF 需要）+ 开启 FullCone"
+echo "==> 5. 开启 flow offloading（OAF 已移除）+ 开启 FullCone"
 cat > files/etc/uci-defaults/98-firewall-tune <<'EOF'
 #!/bin/sh
-# OAF 的 DPI 需要看到每个包，必须关闭软件/硬件加速
-uci set firewall.@defaults[0].flow_offloading='0'
+# OAF 已移除，不再需要为 DPI 让路
+# OAF 已移除，开启软件流转发加速（性能最大化）
+uci set firewall.@defaults[0].flow_offloading='1'
 uci set firewall.@defaults[0].flow_offloading_hw='0'
 # NAT1 完全锥形（immortalwrt 原生支持）
 uci set firewall.@zone[1].fullcone='1'
