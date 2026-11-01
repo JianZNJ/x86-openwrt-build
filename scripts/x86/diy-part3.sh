@@ -369,3 +369,55 @@ if grep -q '\${WG_SRV_PRIV}' files/etc/uci-defaults/92-wireguard 2>/dev/null; th
 else
   echo "    WireGuard 密钥注入 OK"
 fi
+# ============================================================
+# adblock-fast-ACL: 补 /etc/crontabs/root 的 file 权限
+# 原因: luci-app-adblock-fast 的 ACL 缺 file 权限，导致网页里
+#       "定时更新" 保存失败（syncCron 需要写 crontab）
+# ============================================================
+echo "==> adblock-fast ACL fix"
+ACL_ADB=/usr/share/rpcd/acl.d/luci-app-adblock-fast.json
+# 在构建目录里预置补丁后的 ACL（只有包存在时才生效）
+mkdir -p files/usr/share/rpcd/acl.d
+if [ -f "$BUILD_DIR/package/luci-app-adblock-fast/root/usr/share/rpcd/acl.d/luci-app-adblock-fast.json" ] 2>/dev/null; then
+  SRC="$BUILD_DIR/package/luci-app-adblock-fast/root/usr/share/rpcd/acl.d/luci-app-adblock-fast.json"
+elif [ -f "feeds/luci/applications/luci-app-adblock-fast/root/usr/share/rpcd/acl.d/luci-app-adblock-fast.json" ]; then
+  SRC="feeds/luci/applications/luci-app-adblock-fast/root/usr/share/rpcd/acl.d/luci-app-adblock-fast.json"
+else
+  SRC=""
+fi
+if [ -n "$SRC" ] && [ -f "$SRC" ]; then
+  python3 - "$SRC" files/usr/share/rpcd/acl.d/luci-app-adblock-fast.json <<'PYEOF'
+import json, sys
+src, dst = sys.argv[1], sys.argv[2]
+d = json.load(open(src))
+key = list(d.keys())[0]
+d[key].setdefault('read', {}).setdefault('file', {})['/etc/crontabs/root'] = ['read']
+d[key].setdefault('write', {}).setdefault('file', {})['/etc/crontabs/root'] = ['write']
+json.dump(d, open(dst, 'w'), indent=1, ensure_ascii=False)
+print("    ACL patched ->", dst)
+PYEOF
+else
+  echo "    跳过：找不到 luci-app-adblock-fast 的 ACL 源文件"
+fi
+
+# ============================================================
+# nlbwmon 已完成；此处顺带设置 adblock-fast 的下载超时
+# ============================================================
+# ============================================================
+# adblock-fast-TIMEOUT: 默认 10 秒下载超时太短
+# AdguardTeam CNAME 列表有 9.6MB，GitHub 慢时下不完
+# ============================================================
+echo "==> adblock-fast download timeout"
+mkdir -p files/etc/uci-defaults
+cat > files/etc/uci-defaults/94-adblock-timeout <<'EOF'
+#!/bin/sh
+uci -q set adblock-fast.config.download_timeout='60'
+uci -q set adblock-fast.config.download_connect_timeout='20'
+uci -q set adblock-fast.config.curl_retry='5'
+uci -q set adblock-fast.config.curl_max_file_size='50000000'
+# 延迟启动，避免首启时下载列表阻塞 LuCI（adblock-fast 的 ubus handler 会被锁住）
+uci -q set adblock-fast.config.start_delay='60'
+uci commit adblock-fast
+exit 0
+EOF
+chmod +x files/etc/uci-defaults/94-adblock-timeout
