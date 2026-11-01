@@ -335,3 +335,27 @@ return view.extend({
 });
 EOF
 chmod 644 files/usr/share/luci/menu.d/luci-app-fw-ota.json files/usr/share/rpcd/acl.d/luci-app-fw-ota.json files/www/luci-static/resources/view/fw-ota.js
+# ============================================================
+# NLBWMON-FIX: netlink 缓冲不足导致 "No buffer space available"
+# 根因: nlbwmon 请求 512KB 缓冲，但 net.core.rmem_max 默认只有 208KB
+# ============================================================
+echo "==> nlbwmon netlink buffer fix"
+mkdir -p files/etc/sysctl.d
+cat > files/etc/sysctl.d/99-nlbwmon.conf <<'EOF'
+# nlbwmon netlink 缓冲修复（默认 rmem_max 208KB 不足以容纳 nlbwmon 的 512KB 请求）
+net.core.rmem_max = 4194304
+net.core.rmem_default = 524288
+net.core.netdev_max_backlog = 4096
+EOF
+
+mkdir -p files/etc/uci-defaults
+cat > files/etc/uci-defaults/93-nlbwmon <<'EOF'
+#!/bin/sh
+# 降低 conntrack dump 频率，减轻 netlink 压力
+uci -q set nlbwmon.@nlbwmon[0].refresh_interval='120'
+uci -q set nlbwmon.@nlbwmon[0].netlink_buffer_size='1048576'
+uci commit nlbwmon
+/etc/init.d/nlbwmon restart >/dev/null 2>&1
+exit 0
+EOF
+chmod +x files/etc/uci-defaults/93-nlbwmon
