@@ -93,24 +93,26 @@ do_check() {
     return 1
 }
 
-do_update() {
-    force="${1:-0}"
+# 下载 + 校验（只准备，不刷机）；成功时状态置为 ready
+do_fetch() {
     json=$(get_release_json)
-    [ -z "$json" ] && { log "无法访问 GitHub API"; return 2; }
+    [ -z "$json" ] && { log "无法访问 GitHub API"; echo "error" > "$WORKDIR/state"; return 2; }
 
     tag=$(echo "$json" | jsonfilter -e '@[0].tag_name' 2>/dev/null)
-    [ -z "$tag" ] && { log "解析 tag 失败"; return 2; }
+    [ -z "$tag" ] && { log "解析 tag 失败"; echo "error" > "$WORKDIR/state"; return 2; }
 
     lv=$(local_ver)
     rv=$(echo "$tag" | sed 's/^x86-//')
     if ! [ "$rv" -gt "$lv" ] 2>/dev/null; then
         log "已是最新（本地 $lv / 远端 $rv），无需升级"
+        mkdir -p "$WORKDIR"
+        echo "latest" > "$WORKDIR/state"
         return 0
     fi
 
     img_url=$(pick_url "$json" "combined-efi\.img\.gz")
     sum_url=$(pick_url "$json" "sha256sums")
-    [ -z "$img_url" ] && { log "未在 release 中找到 combined-efi.img.gz"; return 3; }
+    [ -z "$img_url" ] && { log "未在 release 中找到 combined-efi.img.gz"; echo "error" > "$WORKDIR/state"; return 3; }
 
     log "目标版本: $tag"
     mkdir -p "$WORKDIR"
@@ -121,7 +123,7 @@ do_update() {
     echo "${total:-0}" > "$WORKDIR/total"
     echo "$tag" > "$WORKDIR/tag"
     echo "downloading" > "$WORKDIR/state"
-    rm -f "$fw" "$WORKDIR/progress.err"
+    rm -f "$fw"
 
     log "下载固件…"
     if ! fetch_url "$img_url" "$fw"; then
@@ -152,18 +154,57 @@ do_update() {
         log "警告: release 中没有 sha256sums，跳过校验"
     fi
 
+    echo "ready" > "$WORKDIR/state"
+    log "下载并校验完成，等待确认刷写"
+    return 0
+}
+
+# 刷写已下载并校验过的固件（需先 download）
+do_install() {
+    fw="$WORKDIR/firmware.img.gz"
+    st=""
+    [ -f "$WORKDIR/state" ] && st=$(cat "$WORKDIR/state" 2>/dev/null)
+    if [ "$st" != "ready" ]; then
+        log "没有已就绪的固件（当前状态: ${st:-idle}），请先下载并校验"
+        return 1
+    fi
+    [ -s "$fw" ] || { log "固件文件不存在，请重新下载"; echo "error" > "$WORKDIR/state"; return 1; }
+    log "开始 sysupgrade（保留配置），设备即将重启…"
+    echo "installing" > "$WORKDIR/state"
+    sysupgrade "$fw"
+}
+
+# 取消：终止下载并清理临时文件
+do_cancel() {
+    log "正在取消…"
+    pkill -f "uclient-fetch.*fw-ota" 2>/dev/null
+    pkill -f "fw-ota force" 2>/dev/null
+    pkill -f "fw-ota download" 2>/dev/null
+    sleep 1
+    rm -rf "$WORKDIR"
+    mkdir -p "$WORKDIR"
+    echo "idle" > "$WORKDIR/state"
+    log "已取消并清理临时文件"
+    return 0
+}
+
+# 命令行：下载 + 可选交互确认 + 刷机
+do_update() {
+    force="${1:-0}"
+    do_fetch || return $?
+    if [ "$(cat "$WORKDIR/state" 2>/dev/null)" = "latest" ]; then
+        return 0
+    fi
     if [ "$force" != "1" ]; then
+        tag=$(cat "$WORKDIR/tag" 2>/dev/null)
         printf "确认刷入 %s 并重启？[y/N] " "$tag"
         read ans
         case "$ans" in
             y|Y|yes|YES) ;;
-            *) log "已取消"; rm -f "$fw"; return 0 ;;
+            *) log "已取消"; rm -f "$WORKDIR/firmware.img.gz"; echo "idle" > "$WORKDIR/state"; return 0 ;;
         esac
     fi
-
-    log "开始 sysupgrade（保留配置），设备即将重启…"
-    echo "installing" > "$WORKDIR/state"
-    sysupgrade "$fw"
+    do_install
 }
 
 # 输出进度 JSON（供 LuCI 轮询）
@@ -178,16 +219,16 @@ do_progress() {
     [ -f "$WORKDIR/tag" ]   && tag=$(cat "$WORKDIR/tag" 2>/dev/null)
     [ -f "$WORKDIR/firmware.img.gz" ] && bytes=$(filesize "$WORKDIR/firmware.img.gz")
 
-    # 没有活跃进程时纠正状态（busybox grep 不支持 \| 交替，分开判断）
+    # 没有活跃进程时纠正过时状态（busybox grep 不支持 \| 交替，分开判断）
     running=0
-    ps w 2>/dev/null | grep -q "[f]w-ota force"  && running=1
-    ps w 2>/dev/null | grep -q "[f]w-ota update" && running=1
+    ps w 2>/dev/null | grep -q "[f]w-ota force"    && running=1
+    ps w 2>/dev/null | grep -q "[f]w-ota update"   && running=1
+    ps w 2>/dev/null | grep -q "[f]w-ota download" && running=1
     if [ "$running" = "0" ]; then
         case "$state" in
             downloading|verifying)
-                # 进程消失但文件仍在且大小吻合 => 可能已完成或中断
                 if [ "$total" -gt 0 ] 2>/dev/null && [ "$bytes" -ge "$total" ] 2>/dev/null; then
-                    state="verifying"
+                    state="ready"
                 else
                     state="idle"
                 fi
@@ -208,12 +249,11 @@ do_progress() {
         "$state" "$bytes" "$total" "$percent" "$tag"
 }
 
-# 后台启动升级（供 LuCI 使用，避免 XHR 超时）
+# 后台启动【下载+校验】（不刷机），供 LuCI 使用，避免 XHR 超时
 do_start() {
     mkdir -p "$WORKDIR"
     echo "downloading" > "$WORKDIR/state"
-    rm -f "$WORKDIR/state.done"
-    nohup /usr/sbin/fw-ota force > /var/log/fw-ota-update.log 2>&1 &
+    nohup /usr/sbin/fw-ota download > /var/log/fw-ota-update.log 2>&1 &
     echo "started"
 }
 
@@ -221,8 +261,11 @@ case "${1:-check}" in
     check)    do_check; exit $? ;;
     update)   do_update 0; exit $? ;;
     force)    do_update 1; exit $? ;;
+    download) do_fetch; exit $? ;;
     start)    do_start; exit 0 ;;
+    install)  do_install; exit $? ;;
+    cancel)   do_cancel; exit $? ;;
     progress) do_progress; exit 0 ;;
     version)  echo "本地版本: $(local_ver)"; exit 0 ;;
-    *)        echo "用法: $0 {check|update|force|start|progress|version}"; exit 1 ;;
+    *)        echo "用法: $0 {check|download|install|cancel|start|progress|update|force|version}"; exit 1 ;;
 esac
