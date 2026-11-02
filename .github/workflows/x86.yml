@@ -153,9 +153,29 @@ jobs:
           prerelease: true
           body: |
             ### x86_64 OpenWrt (immortalwrt 24.10)
-            - 默认地址 `192.168.2.1` / 密码 `password`
-            - NAT1 FullCone / OpenClash / OAF / AdGuardHome / banip / L2TP + WireGuard / Docker
-            - 刷机：`*-combined-efi.img.gz` 用于 UEFI 启动盘
+            
+            **开箱配置**
+            - 管理地址：`http://192.168.2.1`
+            - root 密码：`Za831021.`
+            - WAN：`eth0`（PPPoE）　LAN：`eth1`-`eth3`
+            
+            **已集成**
+            - 网络：NAT1 FullCone + 软件流转发加速（flow offloading）
+            - 代理：OpenClash（内置 mihomo compatible 核心，适配无 AVX2 的 N3xxx/N4xxx）
+            - 安全：banip（爆破防护 + 恶意 IP）、adblock-fast（DNS 广告过滤）
+            - VPN：WireGuard 服务端 + wg↔lan 双向转发
+            - 共享：ksmbd（SMB）　　容器：Docker + dockerman
+            - 工具：Lucky（反代/DDNS）、vlmcsd（KMS）、ttyd、diskman、UPnP、WOL、wrtbwmon
+            - OTA：LuCI「系统 → 固件升级」，带下载进度条与确认/取消
+            
+            **已移除**
+            - AdGuard Home、SQM、OAF、L2TP/IPSec（strongswan + xl2tpd）、openvpn、ddns-scripts、NPS、coremark
+            
+            **刷机说明**
+            - UEFI 启动：`*-squashfs-combined-efi.img.gz`（推荐）
+            - Legacy BIOS：`*-squashfs-combined.img.gz`
+            - 校验：`sha256sums`
+            - sysupgrade 升级会保留配置与 Docker 数据盘
           files: |
             /tmp/fw/*.img.gz
             /tmp/fw/*.manifest

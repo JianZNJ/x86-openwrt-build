@@ -318,15 +318,17 @@ echo "==> adblock-fast ACL fix"
 ACL_ADB=/usr/share/rpcd/acl.d/luci-app-adblock-fast.json
 # 在构建目录里预置补丁后的 ACL（只有包存在时才生效）
 mkdir -p files/usr/share/rpcd/acl.d
-if [ -f "$BUILD_DIR/package/luci-app-adblock-fast/root/usr/share/rpcd/acl.d/luci-app-adblock-fast.json" ] 2>/dev/null; then
-  SRC="$BUILD_DIR/package/luci-app-adblock-fast/root/usr/share/rpcd/acl.d/luci-app-adblock-fast.json"
-elif [ -f "feeds/luci/applications/luci-app-adblock-fast/root/usr/share/rpcd/acl.d/luci-app-adblock-fast.json" ]; then
-  SRC="feeds/luci/applications/luci-app-adblock-fast/root/usr/share/rpcd/acl.d/luci-app-adblock-fast.json"
-else
-  SRC=""
+ACL_SRC=""
+for _p in \
+  "feeds/luci/applications/luci-app-adblock-fast/root/usr/share/rpcd/acl.d/luci-app-adblock-fast.json" \
+  "package/luci-app-adblock-fast/root/usr/share/rpcd/acl.d/luci-app-adblock-fast.json" ; do
+  if [ -f "$_p" ]; then ACL_SRC="$_p"; break; fi
+done
+if [ -z "$ACL_SRC" ]; then
+  ACL_SRC=$(find feeds package -path "*luci-app-adblock-fast*/acl.d/luci-app-adblock-fast.json" 2>/dev/null | head -1 || true)
 fi
-if [ -n "$SRC" ] && [ -f "$SRC" ]; then
-  python3 - "$SRC" files/usr/share/rpcd/acl.d/luci-app-adblock-fast.json <<'PYEOF'
+if [ -n "$ACL_SRC" ] && [ -f "$ACL_SRC" ]; then
+  python3 - "$ACL_SRC" files/usr/share/rpcd/acl.d/luci-app-adblock-fast.json <<'PYEOF'
 import json, sys
 src, dst = sys.argv[1], sys.argv[2]
 d = json.load(open(src))
