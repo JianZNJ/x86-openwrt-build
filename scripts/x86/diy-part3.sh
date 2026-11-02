@@ -272,69 +272,9 @@ cat > files/usr/share/rpcd/acl.d/luci-app-fw-ota.json <<'EOF'
 	}
 }
 EOF
-cat > files/www/luci-static/resources/view/fw-ota.js <<'EOF'
-'use strict';
-'require view';
-'require form';
-'require fs';
-'require ui';
-
-return view.extend({
-	load: function() {
-		return fs.exec('/usr/sbin/fw-ota', [ 'version' ]).catch(function() {
-			return { stdout: '', stderr: '' };
-		});
-	},
-
-	handleRun: function(arg) {
-		var node = document.getElementById('ota-out');
-		node.textContent = '执行中，请稍候...';
-		return fs.exec('/usr/sbin/fw-ota', [ arg ]).then(function(res) {
-			node.textContent = (res.stdout || '') + (res.stderr ? '\n' + res.stderr : '');
-		}).catch(function(e) {
-			node.textContent = '执行失败: ' + e.message;
-		});
-	},
-
-	render: function(res) {
-		var self = this;
-		var ver = (res.stdout || '').trim() || '未知';
-
-		return E('div', { 'class': 'cbi-map' }, [
-			E('h2', {}, _('固件 OTA 升级')),
-			E('div', { 'class': 'cbi-map-descr' },
-				_('从 GitHub Release 检查并升级固件。升级会重启设备，请确保网络稳定。')),
-
-			E('div', { 'class': 'cbi-section' }, [
-				E('p', {}, [ E('strong', {}, _('当前版本：')), ver ]),
-				E('div', { 'class': 'cbi-page-actions' }, [
-					E('button', {
-						'class': 'btn cbi-button cbi-button-action',
-						'click': ui.createHandlerFn(self, 'handleRun', 'check')
-					}, [ _('检查更新') ]),
-					' ',
-					E('button', {
-						'class': 'btn cbi-button cbi-button-apply',
-						'click': ui.createHandlerFn(self, 'handleRun', 'update')
-					}, [ _('立即升级并重启') ])
-				])
-			]),
-
-			E('div', { 'class': 'cbi-section' }, [
-				E('h3', {}, _('输出')),
-				E('pre', {
-					'id': 'ota-out',
-					'style': 'white-space:pre-wrap;background:#f5f5f5;padding:10px;border-radius:4px;min-height:80px'
-				}, [ '' ])
-			])
-		]);
-	},
-
-	handleSaveApply: null,
-	handleSave: null,
-	handleReset: null
-});
-EOF
+# 从仓库拷贝 fw-ota 的 LuCI 界面（含下载进度条）
+install -m 0644 "$GITHUB_WORKSPACE/scripts/x86/fw-ota.js" files/www/luci-static/resources/view/fw-ota.js
+echo "    fw-ota.js $(wc -c < files/www/luci-static/resources/view/fw-ota.js) 字节"
 chmod 644 files/usr/share/luci/menu.d/luci-app-fw-ota.json files/usr/share/rpcd/acl.d/luci-app-fw-ota.json files/www/luci-static/resources/view/fw-ota.js
 # ============================================================
 # NLBWMON-FIX: netlink 缓冲不足导致 "No buffer space available"
