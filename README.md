@@ -178,6 +178,147 @@ install → sysupgrade（保留配置）→ 重启
 
 ---
 
+## daed / dae 配置体系（重要）
+
+### ⚠️ daed 与 dae 不是同一个配置文件
+
+| 组件 | 配置源 | 说明 |
+|------|--------|------|
+| `dae`（独立命令行） | `/etc/dae/config.dae` | 直接读文本文件 |
+| **`daed`（守护进程）** | **`/etc/daed/wing.db`**（SQLite） | **不读 config.dae** |
+
+```
+/etc/config/dae  (UCI 源)
+      ↓ gen-dae-config.sh generate
+/etc/dae/config.dae  (导出产物，仅 dae 服务读取)
+      ✗  daed 不读
+
+/etc/daed/wing.db  (SQLite)
+      ↑ daed Web UI (:2023) 写入
+      ✅ daed 读这里
+```
+
+**改 daed 配置必须用 Web UI (`:2023`) 或写 `wing.db`，改 `config.dae` 完全无效。**
+
+验证方法（无损）：把 `config.dae` 的 `log_level` 改成 `debug` 再重启 daed，日志级别不会变。
+
+### wing.db 结构
+
+```sql
+configs(id, name, global, selected, version)
+dns(id, name, dns, selected, version)
+routings(id, name, routing, selected, version)
+subscriptions / nodes / groups / systems ...
+```
+
+读取当前配置：
+
+```bash
+sqlite3 /etc/daed/wing.db "select dns from dns where selected=1;" | sed 's/\\u000a/\n/g'
+```
+
+---
+
+## adblock-fast 与 daed 的 DNS 冲突（已解决）
+
+### 问题
+
+daed 自带的 DNS 模块在 tc ingress 抢在 dnsmasq 之前，导致 **adblock-fast 的 50 万条规则对局域网客户端完全失效**。
+
+实测对比：
+
+| 域名 | 路由器本机（dnsmasq） | 局域网客户端（被 dae 拦截） |
+|------|----------------------|---------------------------|
+| `google-analytics.com` | NXDOMAIN ✅ | 解析成功 ❌ |
+
+### 解决方案
+
+```
+LAN 客户端 → dae eBPF → dnsmasq:53
+                          ├─ adblock-fast 过滤 50 万条 → NXDOMAIN ✅
+                          └─ 未命中 → 223.5.5.5 / 119.29.29.29
+                                          ↓ pname(dnsmasq) -> must_direct（防循环）
+                          ↓
+                     dae 按域名路由：
+                          geosite:cn → direct
+                          其他       → proxy（按域名拨号，节点侧解析）
+```
+
+### 固件已固化的部分
+
+`files/etc/uci-defaults/99-dns-adblock-integration`：
+
+```ini
+# dnsmasq 上游（忽略 ISP 下发）
+server:   223.5.5.5, 119.29.29.29
+noresolv: 1
+```
+
+以及 `/etc/config/dae`（给 dae 后端用）：
+```ini
+dae.dns.cn_upstream='udp://127.0.0.1:53'
+dae.dns.fallback_upstream='udp://127.0.0.1:53'
+dae.routing.cn_direct='0'
+```
+
+### ⚠️ 需要手动设置的（daed 后端）
+
+`wing.db` 里含订阅/节点，无法固化。请在 **daed Web UI (`:2023`)** 设置：
+
+**配置 → DNS**
+
+```
+上游服务器：
+  dnsmasq    udp://127.0.0.1:53
+
+进阶模式路由：
+  qname(geosite:cn) -> dnsmasq
+  fallback: dnsmasq
+```
+
+**配置 → 路由**
+
+```dae
+routing {
+  pname(NetworkManager, systemd-resolved, dnsmasq) -> must_direct
+  dip(geoip:private) -> direct
+  domain(geosite:cn) -> direct
+  fallback: proxy
+  # ★ 必须删除 dip(geoip:cn) -> direct
+}
+```
+
+**为什么必须删 `dip(geoip:cn)`**：国内 DNS 会把国外域名污染成国内 IP，若保留这条规则，被污染的 IP 会命中它 → 误判直连 → 网站打不开。因为 `dial_mode: domain`，代理连接用域名、由节点侧解析，所以删掉 IP 判断反而更准。
+
+### 效果
+
+| 测试 | 结果 |
+|------|------|
+| `google-analytics.com` | NXDOMAIN ✅ |
+| `pagead2.googlesyndication.com` | NXDOMAIN ✅ |
+| DNS 解析延迟 | 1–2 ms |
+| baidu / taobao | 200 / 58–81 ms（直连） |
+| google / github / youtube | 200 / 231–436 ms（代理） |
+
+> `googletagmanager.com` 不在 Hagezi Pro 列表里是**有意**的（GTM 被正常网站广泛使用）。如需拦截，在 `adblock-fast` 的 `blocked_domains` 手动添加。
+
+---
+
+## ⚠️ 凭据安全
+
+**仓库是 public（OTA 需要），任何凭据都不得入库。**
+
+| 凭据 | 存放位置 | 是否入库 |
+|------|----------|----------|
+| PPPoE 账号/密码 | GitHub Secrets → build.sh 注入 | ✅ Secrets |
+| root 密码 | GitHub Secrets | ✅ Secrets |
+| **阿里云 AccessKey**（ACME DNS-01） | **路由器 `/etc/config/acme`** | ❌ **绝不同步** |
+| **阿里云 AccessKey**（DDNS） | **路由器 `/etc/config/ddns`** | ❌ **绝不同步** |
+| daed 订阅链接/节点 | 路由器 `/etc/daed/wing.db` | ❌ **绝不同步** |
+
+刷机后需手动配置阿里云 Key（ACME 与 DDNS 各一处）。
+
+---
 ## 已知修复
 
 ### wrtbwmon 多实例

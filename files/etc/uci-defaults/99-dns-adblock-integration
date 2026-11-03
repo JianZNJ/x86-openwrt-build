@@ -1,0 +1,36 @@
+#!/bin/sh
+# ============================================================
+#  DNS 链路整合：让 adblock-fast 对局域网客户端真正生效
+#
+#  背景：daed 自带的 DNS 模块会抢在 dnsmasq 之前，
+#        导致 adblock-fast 的 50 万条规则全部失效。
+#
+#  方案：daed 的 DNS 上游指向 dnsmasq（需在 daed UI :2023 里设置），
+#        dnsmasq 上游用国内 DNS，避免递归与污染干扰。
+#        daed 路由里 pname(dnsmasq) -> must_direct 防循环。
+#
+#  注意：daed 的 DNS/路由存在 /etc/daed/wing.db（SQLite），
+#        无法在此固化，请在 daed Web UI 中设置：
+#          配置 → DNS    → 上游加 dnsmasq = udp://127.0.0.1:53
+#                          路由改为 qname(geosite:cn) -> dnsmasq
+#                                    fallback: dnsmasq
+#          配置 → 路由   → 删除 dip(geoip:cn) -> direct
+# ============================================================
+
+# dnsmasq：国内 DNS + 忽略 ISP 下发
+uci -q delete dhcp.@dnsmasq[0].server
+uci add_list dhcp.@dnsmasq[0].server='223.5.5.5'
+uci add_list dhcp.@dnsmasq[0].server='119.29.29.29'
+uci set dhcp.@dnsmasq[0].noresolv='1'
+uci commit dhcp
+
+# dae 后端（若启用）：DNS 全部走 dnsmasq；关闭 cn_direct 避免污染误判
+if [ -f /etc/config/dae ]; then
+	uci set dae.dns.cn_upstream='udp://127.0.0.1:53'
+	uci set dae.dns.fallback_upstream='udp://127.0.0.1:53'
+	uci set dae.routing.cn_direct='0'
+	uci set dae.routing.private_direct='1'
+	uci commit dae
+fi
+
+exit 0
