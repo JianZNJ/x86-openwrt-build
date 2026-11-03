@@ -21,7 +21,10 @@ log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
 # 只保留最近 500 行日志
 [ -f "$LOG" ] && tail -500 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
 
-REMOTE=$(curl -fsSL --max-time 60 "$URL" 2>/dev/null | sed -n 's/^REVISION=//p' | tr -d '"[:space:]')
+# version.buildinfo 的内容就是修订号本身（如 r38263-84b665b5de），
+# 没有 REVISION= 前缀；这里两种格式都兼容
+REMOTE=$(curl -fsSL --max-time 60 "$URL" 2>/dev/null \
+    | tr -d '"[:space:]' | sed 's/^REVISION=//' | head -1)
 if [ -z "$REMOTE" ]; then
     log "拉取上游 version.buildinfo 失败，跳过"
     exit 0
