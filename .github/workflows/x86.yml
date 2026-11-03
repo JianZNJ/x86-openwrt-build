@@ -3,15 +3,8 @@ name: Build ImmortalWrt 25.12 x86-64 (daed)
 # 不再定时构建：由 upstream-check.yml 检测到上游 ImmortalWrt 变化后，
 # 更新 config/upstream-revision.txt 并 push，从而触发本工作流。
 on:
+  # 已改为 .223 本地构建（scripts/local-build.sh），此工作流仅作手动备用
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/x86.yml'
-      - 'config/**'
-      - 'files/**'
-      - 'scripts/**'
-      - 'apks/**'
 
 permissions:
   contents: write
