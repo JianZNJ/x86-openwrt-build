@@ -167,14 +167,31 @@ echo "  包数: $(echo "$PACKAGES" | wc -w)"
 
 rm -rf "$WORK/bindir"; mkdir -p "$WORK/bindir"
 
-make image \
-  PROFILE="$PROFILE" \
-  PACKAGES="$PACKAGES" \
-  FILES="$WORK/files" \
-  BIN_DIR="$WORK/bindir" \
-  EXTRA_IMAGE_NAME="$EXTRA_IMAGE_NAME" \
-  ROOTFS_PARTSIZE="$ROOTFS_PARTSIZE" \
-  -j"$PARALLEL"
+# 包下载偶发中断（wget: exited with error 4 -> unexpected end of file）
+# ImageBuilder 自身不重试，这里整体重试最多 4 次
+BUILD_OK=0
+for attempt in 1 2 3 4; do
+  echo "  --- 第 $attempt 次尝试 ---"
+  if make image \
+      PROFILE="$PROFILE" \
+      PACKAGES="$PACKAGES" \
+      FILES="$WORK/files" \
+      BIN_DIR="$WORK/bindir" \
+      EXTRA_IMAGE_NAME="$EXTRA_IMAGE_NAME" \
+      ROOTFS_PARTSIZE="$ROOTFS_PARTSIZE" \
+      -j"$PARALLEL"; then
+    BUILD_OK=1
+    break
+  fi
+  echo "  ⚠️ 第 $attempt 次失败，清理后重试…"
+  rm -f "$IB_DIR"/build_dir/target-*/root-*/.pkginfo 2>/dev/null || true
+  sleep 15
+done
+
+if [ "$BUILD_OK" != "1" ]; then
+  echo "❌ 构建失败（已重试 4 次）"
+  exit 1
+fi
 
 # ---------- 9. 发布 ----------
 echo "[9/9] 发布到 LAN 目录..."
