@@ -1,0 +1,51 @@
+#!/bin/sh
+# ============================================================
+#  nginx 初始化（替代 Lucky 的反向代理）
+#
+#  注意：OpenWrt 的 nginx 包默认用 UCI 生成 /etc/nginx/uci.conf，
+#        本固件改用手写 /etc/nginx/nginx.conf + conf.d/*.conf。
+#        需删除 uci.conf 符号链接，否则 init 脚本会优先用它。
+# ============================================================
+
+CERT_DIR="/etc/acme/cloudzj.net_ecc"
+CERT="$CERT_DIR/fullchain.cer"
+KEY="$CERT_DIR/cloudzj.net.key"
+
+# 1. 关闭 UCI 驱动的配置生成
+uci set nginx.global.uci_enable='false' 2>/dev/null
+uci commit nginx 2>/dev/null
+
+# 2. 删除 uci.conf 符号链接（让 init 用 nginx.conf）
+rm -f /etc/nginx/uci.conf
+
+# 3. 若 ACME 证书尚不存在，先生成自签占位（保证 nginx 能启动）
+#    ACME 签发成功后会覆盖同路径文件
+mkdir -p "$CERT_DIR"
+if [ ! -s "$CERT" ] || [ ! -s "$KEY" ]; then
+	echo "nginx-setup: ACME cert missing, generating self-signed placeholder"
+	openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+		-nodes -days 3650 \
+		-subj "/CN=cloudzj.net" \
+		-addext "subjectAltName=DNS:*.cloudzj.net,DNS:cloudzj.net" \
+		-keyout "$KEY" -out "$CERT" >/dev/null 2>&1
+	chmod 600 "$KEY"
+	chmod 644 "$CERT"
+	# fullchain 占位 = 自签本身
+	cp -f "$CERT" "$CERT_DIR/ca.cer" 2>/dev/null
+fi
+
+# 4. 防火墙放行 4443
+uci -q delete firewall.https4443
+uci set firewall.https4443=rule
+uci set firewall.https4443.name='Allow-HTTPS-4443'
+uci set firewall.https4443.src='wan'
+uci set firewall.https4443.proto='tcp'
+uci set firewall.https4443.dest_port='4443'
+uci set firewall.https4443.target='ACCEPT'
+uci set firewall.https4443.enabled='1'
+uci commit firewall
+
+# 5. nginx 开机自启
+/etc/init.d/nginx enable 2>/dev/null
+
+exit 0
