@@ -226,7 +226,32 @@ br-lan,wg0
 17 4 * * *  daed-sub-update.sh              # daed 订阅
 ```
 
-GitHub Actions 构建：每周六 02:00 CST。
+GitHub Actions 构建：**不再定时**，改为上游驱动的自动同步。
+
+### 上游同步机制
+
+```
+upstream-check.yml（每 6 小时，cron 17 */6 * * *）
+        ↓ 拉取 upstream version.buildinfo
+        ↓ 与 config/upstream-revision.txt 比对
+   变化 ─┴─ 无变化 → 结束
+        ↓
+   提交新的 upstream-revision.txt 并 push
+        ↓
+x86.yml 由 push 触发（paths: config/**）
+        ↓
+   7 分钟后产出 Release x86-<run_number>
+```
+
+| 项目 | 说明 |
+|------|------|
+| 上游版本戳 | `https://downloads.immortalwrt.org/releases/25.12-SNAPSHOT/targets/x86/64/version.buildinfo` |
+| 本地记录 | `config/upstream-revision.txt` |
+| 检查频率 | 每 6 小时（`17 */6 * * *`） |
+| 镜像内标识 | `/etc/fw-upstream` |
+| 手动触发 | Actions → Upstream Check → Run workflow |
+
+也可以用 `workflow_dispatch` 直接手动构建（不走上游检测）。
 
 ---
 

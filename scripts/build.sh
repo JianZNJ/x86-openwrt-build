@@ -72,6 +72,12 @@ BUILD_NUM="${GITHUB_RUN_NUMBER:-0}"
 echo "$BUILD_NUM" > "$WORK/files/etc/fw-version"
 echo "  构建号 fw-version = $BUILD_NUM"
 chmod 644 "$WORK/files/etc/fw-version"
+# 上游版本戳（ImmortalWrt 构建号）
+UPSTREAM_REV="$(cat "$ROOT_DIR/config/upstream-revision.txt" 2>/dev/null | tr -d '[:space:]')"
+[ -z "$UPSTREAM_REV" ] && UPSTREAM_REV="unknown"
+echo "$UPSTREAM_REV" > "$WORK/files/etc/fw-upstream"
+echo "  上游版本 fw-upstream = $UPSTREAM_REV"
+chmod 644 "$WORK/files/etc/fw-upstream"
 
 # ---------- 4. 加入第三方 APK ----------
 echo "[4/6] 加入第三方 APK..."

@@ -1,10 +1,9 @@
 name: Build ImmortalWrt 25.12 x86-64 (daed)
 
+# 不再定时构建：由 upstream-check.yml 检测到上游 ImmortalWrt 变化后，
+# 更新 config/upstream-revision.txt 并 push，从而触发本工作流。
 on:
   workflow_dispatch:
-  schedule:
-    # 每周六 02:00 CST（周五 18:00 UTC）
-    - cron: '0 18 * * 5'
   push:
     branches: [main]
     paths:
@@ -64,6 +63,7 @@ jobs:
           echo "SHA=$(sha256sum "$IMG" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
           echo "SIZE=$(du -h "$IMG" | cut -f1)" >> "$GITHUB_OUTPUT"
           echo "PKGS=$(wc -l < "$MAN" 2>/dev/null || echo 0)" >> "$GITHUB_OUTPUT"
+          echo "UPSTREAM=$(cat ../config/upstream-revision.txt 2>/dev/null | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
 
       - name: 上传 artifact
         uses: actions/upload-artifact@v4
@@ -94,6 +94,7 @@ jobs:
 
             | 项目 | 值 |
             |------|-----|
+            | 上游版本 | `${{ steps.collect.outputs.UPSTREAM }}` |
             | 内核 | 6.12.x（内置 BTF） |
             | 包数量 | ${{ steps.collect.outputs.PKGS }} |
             | 镜像大小 | ${{ steps.collect.outputs.SIZE }} |
@@ -109,10 +110,20 @@ jobs:
             - **Lucky**（`:4443` 已放行 WAN）
             - **adblock-fast**（3 列表，506k+ 域名，周日 04:00 更新）
             - **banip**（dshield/firehol1/threat/greensnow，周日 03:00 更新）
-            - **wtbwmon**（单实例修复：绕过 procd + rc.local 守卫）
+            - **wtbwmon**（单实例修复）
             - **Server酱** luci-app-wechatpush
+            - **fw-ota**（LuCI → 系统 → 固件升级）
             - Docker（`/mnt/data/docker`）
             - kmod-nft-fullcone（NAT1）
+
+            ### OTA
+
+            本镜像内置 OTA。刷入后可通过 `LuCI → 系统 → 固件升级 (OTA)` 在线升级。
+
+            ```bash
+            /usr/sbin/fw-ota check      # 0=有新版 1=已最新 2=出错
+            /usr/sbin/fw-ota version    # 查看本地构建号
+            ```
 
             ### 刷机
 
@@ -120,9 +131,7 @@ jobs:
             gunzip -c *squashfs-combined-efi.img.gz | dd of=/dev/sda bs=4M status=progress conv=fsync
             ```
 
-            > ⚠️ 整盘覆盖会清空数据分区。若要保留 sda3：
-            > `gunzip -c *.img.gz | dd of=/dev/sda bs=1M count=1200 conv=fsync`
-            > 之后用 `gdisk -e` 把 GPT 备份头移到盘尾，再 `gdisk -n 3:4325888:0` 重建分区。
+            > ⚠️ 整盘覆盖会清空数据分区。要保留 sda3 见 README 的「保留数据分区的写法」。
 
             ### 校验
 
