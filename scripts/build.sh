@@ -112,3 +112,37 @@ echo ""
 if [ -f "$OUT/sha256sums" ]; then
   sha256sum -c sha256sums --ignore-missing 2>&1 | tail -5 || true
 fi
+
+# ---------- 7. 验证凭据已注入 ----------
+echo "[7/7] 验证凭据注入..."
+CHK="$IB_DIR/build_dir/target-x86_64_musl/root-x86/etc/uci-defaults/98-set-network"
+if [ -f "$CHK" ]; then
+  if grep -q '__PPPOE_USER__' "$CHK"; then
+    echo "  ❌ 凭据未注入：占位符仍存在（请检查 Secrets）"
+    exit 1
+  fi
+  echo "  ✅ PPPoE 凭据已注入"
+  grep -c "option\|uci set network.wan" "$CHK" >/dev/null 2>&1 || true
+else
+  echo "  ⚠️ 未找到 staging rootfs，跳过验证"
+fi
+
+CHKPW="$IB_DIR/build_dir/target-x86_64_musl/root-x86/etc/uci-defaults/99-set-root-password"
+if [ -f "$CHKPW" ]; then
+  grep -q '__ROOT_PASS__' "$CHKPW" && { echo "  ❌ root 密码未注入"; exit 1; }
+  echo "  ✅ root 密码已注入"
+fi
+
+# ---------- 8. 校验 daed 关键包 ----------
+echo "[8/8] 校验关键包..."
+MAN=$(ls "$OUT"/*.manifest 2>/dev/null | head -1)
+if [ -n "$MAN" ]; then
+  for p in dae daed luci-app-daede lucky wrtbwmon luci-app-wechatpush kmod-nft-fullcone; do
+    if grep -qE "^\s*$p\s+-" "$MAN"; then
+      echo "  ✅ $p"
+    else
+      echo "  ❌ $p 缺失"
+    fi
+  done
+  echo "  包总数: $(wc -l < "$MAN")"
+fi
