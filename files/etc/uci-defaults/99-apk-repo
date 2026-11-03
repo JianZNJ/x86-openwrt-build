@@ -1,0 +1,42 @@
+#!/bin/sh
+# ============================================================
+#  修复 apk 软件源
+#
+#  问题：ImmortalWrt 快照镜像默认指向 mirrors.vsean.net，
+#        该镜像已失效（返回 302 + 0 字节），导致：
+#          - apk update 报 "unexpected end of file"
+#          - apk add 报 "no such package"（依赖索引缺失）
+#          - 无法安装/重装任何软件包（如 luci-app-dockerman）
+#
+#  修复：改写为官方源 downloads.immortalwrt.org
+# ============================================================
+
+LIST=/etc/apk/repositories.d/distfeeds.list
+KVER=$(uname -r)
+
+# 已指向官方源则跳过
+grep -q "downloads.immortalwrt.org" "$LIST" 2>/dev/null && exit 0
+
+# 优先使用固件内置的备份（若有）
+if [ -f "${LIST}.bak" ] && grep -q "downloads.immortalwrt.org" "${LIST}.bak" 2>/dev/null; then
+	cp "${LIST}.bak" "$LIST"
+	exit 0
+fi
+
+# 否则按内核版本重新生成
+BASE="https://downloads.immortalwrt.org/releases/25.12-SNAPSHOT"
+TARGET="$BASE/targets/x86/64"
+KPKG=$(ls -d "$TARGET"/kmods/${KVER}-* 2>/dev/null | head -1)
+[ -n "$KPKG" ] || KPKG="$TARGET/kmods"
+
+cat > "$LIST" <<EOF
+$TARGET/packages/packages.adb
+$BASE/packages/x86_64/base/packages.adb
+$KPKG/packages.adb
+$BASE/packages/x86_64/luci/packages.adb
+$BASE/packages/x86_64/packages/packages.adb
+$BASE/packages/x86_64/routing/packages.adb
+$BASE/packages/x86_64/telephony/packages.adb
+EOF
+
+exit 0

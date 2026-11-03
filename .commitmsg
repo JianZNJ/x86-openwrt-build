@@ -1,0 +1,22 @@
+fix(apk): 修复软件源（mirrors.vsean.net 已失效）
+
+问题
+----
+ImmortalWrt 快照镜像默认指向 mirrors.vsean.net，该镜像已失效：
+- 返回 302 + 0 字节
+- apk update 报 "unexpected end of file"
+- apk add 报 "no such package"（依赖索引缺失）
+- 结果：luci-app-dockerman 等包无法安装/重装，LuCI 里 Docker 菜单消失
+
+修复
+----
+files/etc/uci-defaults/99-apk-repo
+- 改写 distfeeds.list 为 downloads.immortalwrt.org
+- 优先复用固件内的 distfeeds.list.bak
+- kmods 路径按 uname -r 动态拼接
+
+实测
+----
+修复前: ERROR: wget: exited with error 4 / no such package
+修复后: OK: 11517 distinct packages available
+        apk add luci-app-dockerman 成功（连带 libcap/libuv1/libwebsockets-full/ttyd/ucode-mod-socket）
