@@ -183,7 +183,7 @@ return view.extend({
 		return E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, _('固件 OTA 升级')),
 			E('div', { 'class': 'cbi-map-descr' },
-				_('从 GitHub Release 下载固件。流程：下载 → 校验 SHA256 → 确认后刷写并重启。配置会保留。')),
+				_('从内网构建服务器（192.168.2.130）下载固件。流程：下载 → 校验 SHA256 → 确认后刷写并重启。配置会保留。')),
 
 			E('div', { 'class': 'cbi-section' }, [
 				E('p', {}, [ E('strong', {}, _('当前版本：')), ver ]),
