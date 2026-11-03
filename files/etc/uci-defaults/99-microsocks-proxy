@@ -1,0 +1,42 @@
+#!/bin/sh
+# ============================================================
+#  microsocks：容器访问国外用的 SOCKS5 代理
+#
+#  原理：
+#    容器 → 172.17.0.1:1080 (microsocks)
+#         → microsocks 进程的流量属于「路由器本机」
+#         → 被 daed 的 wan_interface 拦截 → 走代理 → 国外 ✅
+#
+#  为什么不用 daed 直接 hook docker0：
+#    实测会把容器的 DNS/TCP 全打断（ICMP 仍通），不可行。
+#
+#  安全：
+#    - 只监听 172.17.0.1（docker 网桥），LAN/WAN 均不可达
+#    - 启用 SOCKS5 用户名口令认证
+#    - 密码首次启动随机生成，写入 /etc/microsocks.pass (600)
+# ============================================================
+
+PASSFILE=/etc/microsocks.pass
+
+# 生成随机密码（仅首次）
+if [ ! -s "$PASSFILE" ]; then
+	head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 16 > "$PASSFILE"
+	chmod 600 "$PASSFILE"
+fi
+PW=$(cat "$PASSFILE" 2>/dev/null)
+[ -n "$PW" ] || PW="changeMe123"
+
+uci set microsocks.config=microsocks
+uci set microsocks.config.enabled='1'
+uci set microsocks.config.listenip='172.17.0.1'
+uci set microsocks.config.port='1080'
+uci set microsocks.config.user='svc'
+uci set microsocks.config.password="$PW"
+uci set microsocks.config.auth_once='0'
+uci set microsocks.config.internet_access='0'
+uci set microsocks.config.quiet='1'
+uci commit microsocks
+
+/etc/init.d/microsocks enable 2>/dev/null
+
+exit 0

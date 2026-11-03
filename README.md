@@ -319,6 +319,103 @@ routing {
 刷机后需手动配置阿里云 Key（ACME 与 DDNS 各一处）。
 
 ---
+## 容器访问国外（microsocks SOCKS5 代理）
+
+### 问题
+
+Docker 容器流量走 `docker0 → MASQUERADE → pppoe-wan`（直连），**不经过 daed**，
+因此只能访问国内站点。
+
+> 实测：把 `docker0` 加进 daed 的 `lan_interface` 会**打断容器的 DNS 和 TCP**
+> （ICMP 仍通），不可行，已放弃。
+
+### 方案：宿主机上的 SOCKS5 代理
+
+```
+容器 → 172.17.0.1:1080 (microsocks)
+     → microsocks 进程 = 路由器本机流量
+     → 被 daed 的 wan_interface 拦截 → 走代理 → 国外 ✅
+```
+
+`microsocks` 仅 **8 KB**，源码编译（不在 apk feed 中）。
+
+### 固件已固化
+
+- `apks/microsocks-1.0.5-r2.apk`
+- `files/etc/uci-defaults/99-microsocks-proxy`
+  - 监听 `172.17.0.1:1080`（**仅 docker 网桥，LAN/WAN 不可达**）
+  - 启用 SOCKS5 用户名口令认证
+  - **密码首次启动随机生成** → `/etc/microsocks.pass`（600）
+
+### 读取代理密码
+
+```bash
+cat /etc/microsocks.pass
+```
+
+用户名为 `svc`。
+
+### 配置各应用
+
+**Sonarr / Radarr**（通过 API，最可靠）：
+
+```bash
+K=$(grep -o '<ApiKey>[^<]*' /mnt/data/Configs/Sonarr/config.xml | sed 's/<ApiKey>//')
+curl -s -H "X-Api-Key: $K" http://192.168.2.1:8989/api/v3/config/host > /tmp/h.json
+jq '.proxyEnabled=true | .proxyType="socks5" | .proxyHostname="172.17.0.1"
+    | .proxyPort=1080 | .proxyUsername="svc" | .proxyPassword="<从 /etc/microsocks.pass 读>"
+    | .proxyBypassFilter="192.168.2.0/24,172.17.0.0/16,127.0.0.1"
+    | .proxyBypassLocalAddresses=true' /tmp/h.json > /tmp/h2.json
+curl -s -X PUT -H "X-Api-Key: $K" -H "Content-Type: application/json" \
+     --data @/tmp/h2.json http://192.168.2.1:8989/api/v3/config/host
+```
+
+**Jackett**（`ProxyType` 数值含义）：
+
+```json
+"ProxyType": 2,              // 2 = SOCKS5（1 是 HTTP，会失败）
+"ProxyUrl": "172.17.0.1",
+"ProxyPort": 1080,
+"ProxyUsername": "svc",
+"ProxyPassword": "<同上>",
+"ProxyIsAnonymous": false
+```
+
+配置文件：`/mnt/data/Configs/Jackett/Jackett/ServerConfig.json`，改完 `docker restart jackett`。
+
+> ⚠️ **`ProxyType` 的坑**：设 `1` 时 Jackett 会发 HTTP CONNECT 给 SOCKS5 服务，
+> 报 `EstablishProxyTunnelAsync ... The response ended prematurely`。**必须用 `2`**。
+
+### 验证
+
+```bash
+# 代理连接日志（临时关 quiet）
+uci set microsocks.config.quiet='0'; uci commit microsocks
+/etc/init.d/microsocks restart
+logread | grep microsocks      # 应看到 "connected to xxx:443"
+uci set microsocks.config.quiet='1'; uci commit microsocks
+/etc/init.d/microsocks restart
+```
+
+**实测结果**：
+
+| 应用 | 测试 | 结果 |
+|------|------|------|
+| Jackett | thepiratebay 搜索 | ✅ 100 条 |
+| Sonarr | TVDB lookup | ✅ Breaking Bad (2008) |
+| Radarr | TMDB lookup | ✅ Inception (2010) |
+
+### 已知限制
+
+部分 indexer 需要 **FlareSolverr**（Cloudflare 挑战），与代理无关：
+
+```
+1337x / eztv → "Challenge detected but FlareSolverr is not configured"
+```
+
+需要另装 FlareSolverr 容器并在 Jackett 里填 `FlareSolverrUrl`。
+
+---
 ## 已知修复
 
 ### wrtbwmon 多实例
