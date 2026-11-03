@@ -1,0 +1,13 @@
+{
+	"admin/system/fw-ota": {
+		"title": "固件升级 (OTA)",
+		"order": 60,
+		"action": {
+			"type": "view",
+			"path": "fw-ota"
+		},
+		"depends": {
+			"acl": [ "luci-app-fw-ota" ]
+		}
+	}
+}

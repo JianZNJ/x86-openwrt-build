@@ -1,0 +1,15 @@
+{
+	"luci-app-fw-ota": {
+		"description": "Grant access to fw-ota",
+		"read": {
+			"file": {
+				"/usr/sbin/fw-ota": [ "exec" ]
+			}
+		},
+		"write": {
+			"file": {
+				"/usr/sbin/fw-ota": [ "exec" ]
+			}
+		}
+	}
+}

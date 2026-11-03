@@ -67,6 +67,12 @@ done
 
 chmod +x "$WORK/files/etc/uci-defaults/"* 2>/dev/null || true
 
+# 写入构建号（OTA 版本比对用）
+BUILD_NUM="${GITHUB_RUN_NUMBER:-0}"
+echo "$BUILD_NUM" > "$WORK/files/etc/fw-version"
+echo "  构建号 fw-version = $BUILD_NUM"
+chmod 644 "$WORK/files/etc/fw-version"
+
 # ---------- 4. 加入第三方 APK ----------
 echo "[4/6] 加入第三方 APK..."
 mkdir -p "$IB_DIR/packages"

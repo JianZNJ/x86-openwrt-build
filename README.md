@@ -38,6 +38,10 @@ files/etc/uci-defaults/       首次启动配置脚本
   99-firewall-4443            Lucky 端口放行
   99-docker-data-root         Docker 数据根 → /mnt/data
 files/etc/sysctl.d/            nlbwmon 缓冲修复
+files/usr/sbin/fw-ota           OTA 主脚本
+files/www/.../view/fw-ota.js   OTA LuCI 界面
+files/usr/share/luci/menu.d    OTA 菜单
+files/usr/share/rpcd/acl.d    OTA ACL
 scripts/build.sh              构建脚本（本地 / CI 通用）
 out/                          产物
 ```
@@ -109,6 +113,68 @@ uci set fstab.@mount[-1].enabled='1'
 uci commit fstab
 reboot
 ```
+
+---
+
+---
+
+## 固件 OTA
+
+镜像内置 `fw-ota`，可从 GitHub Releases 自动检查/下载/校验/刷写。
+
+### LuCI 界面
+
+```
+LuCI → 系统 → 固件升级 (OTA)
+```
+
+四个按钮：**检查更新** / **开始下载** / **取消** / **确认刷入并重启**，带实时进度条。
+
+### 命令行
+
+```bash
+/usr/sbin/fw-ota version     # 本地构建号
+/usr/sbin/fw-ota check       # 检查（0=有新版 1=已最新 2=出错）
+/usr/sbin/fw-ota download    # 下载 + sha256 校验（后台）
+/usr/sbin/fw-ota progress    # 进度 JSON
+/usr/sbin/fw-ota install     # 刷入（需先 ready）
+/usr/sbin/fw-ota cancel      # 取消
+/usr/sbin/fw-ota update      # 下载+校验+交互确认刷机
+/usr/sbin/fw-ota force       # 同上但跳过版本比较
+```
+
+### 工作流程
+
+```
+check  → 比对 /etc/fw-version 与 Release tag（x86-<run_number>）
+         ↓ 有新版本
+download → 后台下载 combined-efi.img.gz → sha256sums 校验
+         ↓ 状态 ready
+install → sysupgrade（保留配置）→ 重启
+```
+
+### 状态机
+
+`idle` → `downloading` → `verifying` → `ready` → `installing`
+
+出错进入 `error`；已最新时进入 `latest`。
+
+### 自动检查
+
+`/etc/crontabs/root`：
+
+```
+0 4 * * 6 /usr/sbin/fw-ota check >> /var/log/fw-ota.log 2>&1
+```
+
+每周六 04:00 只检查不刷机，日志写入 `/var/log/fw-ota.log`。
+
+### 注意
+
+- 镜像下载走路由器默认出口；若开启了 daed 且节点不稳定，建议把
+  `github.com` / `objects.githubusercontent.com` 加入直连规则
+- `sysupgrade` 保留配置，但**跨大版本**（如 24.10 → 25.12）建议全新刷写
+- 工作目录 `/tmp/fw-ota`（内存盘，重启清空）
 
 ---
 
