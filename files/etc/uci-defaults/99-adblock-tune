@@ -1,0 +1,22 @@
+#!/bin/sh
+# adblock-fast：启用 3 个列表 + 加大下载超时 + 每周日 04:00 自动更新
+uci set adblock-fast.config.enabled='1'
+uci set adblock-fast.config.download_timeout='180'
+uci set adblock-fast.config.download_connect_timeout='60'
+uci set adblock-fast.config.download_max_time='180'
+uci set adblock-fast.config.curl_retry='8'
+uci set adblock-fast.config.curl_max_file_size='80000000'
+uci set adblock-fast.config.dns='dnsmasq.servers'
+
+for i in 0 1 2; do
+  uci -q set adblock-fast.@file_url[$i].enabled='1'
+done
+for i in 3 4 5 6 7 8 9; do
+  uci -q set adblock-fast.@file_url[$i].enabled='0'
+done
+uci commit adblock-fast
+
+# 定时更新
+grep -q "adblock-fast-auto" /etc/crontabs/root 2>/dev/null || \
+  echo '0 4 * * 0 /etc/init.d/adblock-fast dl # adblock-fast-auto' >> /etc/crontabs/root
+exit 0

@@ -1,0 +1,15 @@
+#!/bin/sh
+# daed 初始化：创建数据目录 + 启用服务
+mkdir -p /etc/daed /var/log/daed
+chmod 755 /etc/daed /var/log/daed
+
+uci set daed.config=daed
+uci set daed.config.enabled='1'
+uci set daed.config.listen_addr='0.0.0.0:2023'
+uci set daed.config.log_maxbackups='1'
+uci set daed.config.log_maxsize='5'
+uci commit daed
+
+uci set daede.config.active_backend='daed'
+uci commit daede
+exit 0

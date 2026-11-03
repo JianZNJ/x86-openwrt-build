@@ -1,0 +1,6 @@
+#!/bin/sh
+# Docker 数据根指向 sda3（存在才启用）
+[ -b /dev/sda3 ] || exit 0
+uci set dockerd.globals.data_root='/mnt/data/docker'
+uci commit dockerd
+exit 0

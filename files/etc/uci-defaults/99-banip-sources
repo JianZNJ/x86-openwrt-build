@@ -1,0 +1,15 @@
+#!/bin/sh
+# banip：启用 4 个低误报黑名单源
+uci set banip.global.ban_enabled='1'
+uci set banip.global.ban_fetchcmd='curl'
+uci set banip.global.ban_logchain='1'
+uci -q delete banip.global.ban_sources
+for n in dshield firehol1 threat greensnow; do
+  uci add_list banip.global.ban_sources="$n"
+done
+uci commit banip
+
+# 每周日 03:00 刷新黑名单
+grep -q "banip-auto" /etc/crontabs/root 2>/dev/null || \
+  echo '0 3 * * 0 /etc/init.d/banip reload # banip-auto' >> /etc/crontabs/root
+exit 0

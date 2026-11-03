@@ -1,0 +1,23 @@
+#!/bin/sh
+# wrtbwmon 修复：-d 会自 daemonize，与 procd respawn + hotplug restart 叠加会产生多实例
+# 方案：禁用 procd 服务与 hotplug，改由 rc.local 单实例守卫启动
+/etc/init.d/wrtbwmon disable 2>/dev/null
+[ -f /etc/hotplug.d/iface/99-wrtbwmon ] && chmod -x /etc/hotplug.d/iface/99-wrtbwmon
+rm -f /etc/rc.d/S99wrtbwmon 2>/dev/null
+
+cat > /etc/rc.local <<'RCEOF'
+# Put your custom commands here that should be executed once
+# the system init finished. By default this file does nothing.
+
+# WRTBWMON-GUARD: 单实例启动（绕过 procd）
+(
+  sleep 25
+  pidof wrtbwmon >/dev/null 2>&1 || \
+    /usr/sbin/wrtbwmon -46 -f /tmp/usage.db -p /tmp/usage.htm -u /etc/wrtbwmon.user -d
+  logger -t wrtbwmon-guard "started: $(pidof wrtbwmon | tr '\n' ' ')"
+) >/dev/null 2>&1 &
+
+exit 0
+RCEOF
+chmod +x /etc/rc.local
+exit 0

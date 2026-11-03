@@ -1,0 +1,12 @@
+#!/bin/sh
+# Lucky 后台端口 4443 对 WAN 放行
+uci -q delete firewall.lucky4443
+uci set firewall.lucky4443=rule
+uci set firewall.lucky4443.name='Allow-Lucky-4443'
+uci set firewall.lucky4443.src='wan'
+uci set firewall.lucky4443.proto='tcp'
+uci set firewall.lucky4443.dest_port='4443'
+uci set firewall.lucky4443.target='ACCEPT'
+uci set firewall.lucky4443.enabled='1'
+uci commit firewall
+exit 0
