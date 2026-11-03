@@ -405,6 +405,54 @@ uci set microsocks.config.quiet='1'; uci commit microsocks
 | Sonarr | TVDB lookup | ✅ Breaking Bad (2008) |
 | Radarr | TMDB lookup | ✅ Inception (2010) |
 
+### FlareSolverr（解决 Cloudflare 挑战）
+
+部分 indexer（eztv、1337x 等）启用了 Cloudflare 挑战，需要 FlareSolverr。
+
+```bash
+docker run -d --name flaresolverr \
+  --restart unless-stopped \
+  --network host \
+  -e LOG_LEVEL=info -e TZ=Asia/Shanghai \
+  -e HOST=172.17.0.1 -e PORT=8191 -e HEADLESS=true \
+  ghcr.io/flaresolverr/flaresolverr:latest
+```
+
+> **必须用 `--network host`**：FlareSolverr 的 Chromium 需要访问被墙站点，
+> host 网络下它的流量等于路由器本机流量，会被 daed 自动代理。
+> `HOST=172.17.0.1` 保证只监听 docker 网桥，不外露。
+
+在 Jackett 的 `ServerConfig.json` 填：
+
+```json
+"FlareSolverrUrl": "http://172.17.0.1:8191",
+"FlareSolverrMaxTimeout": 60000
+```
+
+#### ⚠️ FlareSolverr 的凭据格式坑
+
+FlareSolverr 3.5.2 **只识别 URL 内嵌凭据**，忽略分离的字段：
+
+| 传入方式 | 结果 |
+|---|---|
+| `{"proxy":{"url":"socks5://svc:pass@172.17.0.1:1080"}}` | ✅ 正常 |
+| `{"proxy":{"url":"socks5://172.17.0.1:1080","username":"svc","password":"..."}}` | ❌ `ERR_SOCKS_CONNECTION_FAILED` |
+
+而 Jackett 传的正是**分离字段**，所以如果 microsocks 启用了认证，
+FlareSolverr 侧必然失败。
+
+**结论**：microsocks 不启用认证（仅靠 `listenip=172.17.0.1` 限界）。
+
+#### 实测
+
+| indexer | 结果 |
+|---|---|
+| eztv | ✅ 有结果 |
+| thepiratebay | ✅ 100 条 |
+| 1337x | ❌ Cloudflare 对代理出口 IP 直接 403（`curl https://1337x.to` 就是 403），非配置问题 |
+| yts | ❌ `movies-api` 域名自身问题 |
+
+---
 ### 已知限制
 
 部分 indexer 需要 **FlareSolverr**（Cloudflare 挑战），与代理无关：
