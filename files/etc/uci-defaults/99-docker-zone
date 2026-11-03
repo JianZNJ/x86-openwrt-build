@@ -1,0 +1,29 @@
+#!/bin/sh
+# ============================================================
+#  Docker 区域与出向转发
+#
+#  背景：fw4 的 forward 链 policy=drop。若只有 docker 区域
+#        （input/output/forward=ACCEPT）而没有 forwarding 到 wan，
+#        容器出向流量会被丢弃 → 容器完全没有外网。
+#
+#  症状：容器内 ping/curl 任何外网地址都失败，但 172.17.0.1 通。
+# ============================================================
+
+# 1. 确保 docker 区域存在
+if ! uci -q get firewall.docker >/dev/null 2>&1; then
+	uci set firewall.docker=zone
+	uci set firewall.docker.name='docker'
+	uci set firewall.docker.network='docker'
+	uci set firewall.docker.input='ACCEPT'
+	uci set firewall.docker.output='ACCEPT'
+	uci set firewall.docker.forward='ACCEPT'
+fi
+
+# 2. 确保 docker -> wan 转发（命名 section，幂等）
+uci -q delete firewall.docker_wan 2>/dev/null
+uci set firewall.docker_wan=forwarding
+uci set firewall.docker_wan.src='docker'
+uci set firewall.docker_wan.dest='wan'
+
+uci commit firewall
+exit 0
