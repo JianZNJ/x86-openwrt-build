@@ -116,7 +116,7 @@ echo "============================================================"
 ls -lh "$OUT" | grep -vE '^total|^d'
 echo ""
 if [ -f "$OUT/sha256sums" ]; then
-  sha256sum -c sha256sums --ignore-missing 2>&1 | tail -5 || true
+  ( cd "$OUT" && sha256sum -c sha256sums --ignore-missing 2>&1 | tail -5 ) || true
 fi
 
 # ---------- 7. 验证凭据已注入 ----------
@@ -152,3 +152,20 @@ if [ -n "$MAN" ]; then
   done
   echo "  包总数: $(wc -l < "$MAN")"
 fi
+
+# ---------- 9. 校验 OTA 组件 ----------
+echo "[9/9] 校验 OTA 组件..."
+RROOT="$IB_DIR/build_dir/target-x86_64_musl/root-x86"
+for f in \
+  "usr/sbin/fw-ota" \
+  "www/luci-static/resources/view/fw-ota.js" \
+  "usr/share/luci/menu.d/luci-app-fw-ota.json" \
+  "usr/share/rpcd/acl.d/luci-app-fw-ota.json" \
+  "etc/fw-version" ; do
+  if [ -e "$RROOT/$f" ]; then
+    echo "  ✅ $f"
+  else
+    echo "  ❌ $f 缺失"
+  fi
+done
+[ -f "$RROOT/etc/fw-version" ] && echo "  fw-version = $(cat "$RROOT/etc/fw-version")"
