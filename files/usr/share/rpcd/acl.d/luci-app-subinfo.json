@@ -1,0 +1,15 @@
+{
+	"luci-app-subinfo": {
+		"description": "Grant access to subscription info",
+		"read": {
+			"file": {
+				"/usr/sbin/subinfo": [ "exec" ]
+			}
+		},
+		"write": {
+			"file": {
+				"/usr/sbin/subinfo": [ "exec" ]
+			}
+		}
+	}
+}

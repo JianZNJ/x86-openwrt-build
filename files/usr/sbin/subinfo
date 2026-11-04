@@ -1,0 +1,92 @@
+#!/bin/sh
+# subinfo — 读取机场订阅的套餐信息（总量 / 已用 / 到期），输出 JSON
+#
+# 数据来源优先级：
+#   1. 响应头 subscription-userinfo（标准做法）
+#   2. 订阅里的“假节点”名字（很多机场为了不显示响应头的客户端会这么做）：
+#        "剩余流量：56.34GB"  "过期时间：2026-11-26"
+#
+# 用法: subinfo [refresh]
+#   refresh 忽略缓存强制刷新
+set -u
+
+CACHE=/tmp/subinfo.json
+
+url=$(uci -q get subinfo.config.url)
+ua=$(uci -q get subinfo.config.ua)
+[ -n "${ua:-}" ] || ua="clash-verge/v1.7.7"
+ttl=$(uci -q get subinfo.config.cache_ttl)
+[ -n "${ttl:-}" ] || ttl=600
+
+now=$(date +%s)
+
+if [ -z "${url:-}" ]; then
+	printf '{"ok":0,"error":"未配置订阅地址","fetched_at":%s}\n' "$now"
+	exit 0
+fi
+
+host=$(printf '%s' "$url" | sed -e 's#^https\{0,1\}://##' -e 's#/.*##')
+
+# 缓存未过期就直接用
+if [ "${1:-}" != "refresh" ] && [ -f "$CACHE" ]; then
+	m=$(date -r "$CACHE" +%s 2>/dev/null || echo 0)
+	if [ $((now - m)) -lt "$ttl" ]; then
+		cat "$CACHE"
+		exit 0
+	fi
+fi
+
+resp=$(curl -sL -m 25 -A "$ua" -D /tmp/subinfo.hdr -o /tmp/subinfo.body "$url" 2>/dev/null)
+rc=$?
+
+if [ $rc -ne 0 ]; then
+	printf '{"ok":0,"error":"订阅请求失败 (curl rc=%s)","host":"%s","fetched_at":%s}\n' "$rc" "$host" "$now"
+	exit 0
+fi
+
+info=$(tr -d '\r' < /tmp/subinfo.hdr | grep -i '^subscription-userinfo:' | tail -1 | sed 's/^[^:]*:[[:space:]]*//')
+up=0; dn=0; tot=0; exp=0; src="header"; exp_txt=""
+
+if [ -n "$info" ]; then
+	for kv in $(printf '%s' "$info" | tr ';' ' '); do
+		k=${kv%%=*}
+		v=${kv#*=}
+		case "$k" in
+			upload)   up=$v ;;
+			download) dn=$v ;;
+			total)    tot=$v ;;
+			expire)   exp=$v ;;
+		esac
+	done
+fi
+
+# 没有响应头（或字段全 0）→ 从“假节点”名字里解析
+if [ "$tot" = "0" ]; then
+	src="node"
+	left=$(grep -ao '剩余流量[：:][ ]*[0-9.]*[[:space:]]*[KMGT]i*B' /tmp/subinfo.body 2>/dev/null | head -1 | sed 's/.*[：:]//; s/[[:space:]]//g')
+	exp_txt=$(grep -ao '过期时间[：:][ ]*[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}' /tmp/subinfo.body 2>/dev/null | head -1 | sed 's/.*[：:]//')
+	if [ -n "$left" ]; then
+		num=$(printf '%s' "$left" | sed 's/[^0-9.]//g')
+		unit=$(printf '%s' "$left" | sed 's/[0-9.]//g' | tr 'a-z' 'A-Z')
+		case "$unit" in
+			TB|TIB) mult=1099511627776 ;;
+			GB|GIB) mult=1073741824 ;;
+			MB|MIB) mult=1048576 ;;
+			KB|KIB) mult=1024 ;;
+			*)      mult=1 ;;
+		esac
+		left_only=$(awk -v n="$num" -v m="$mult" 'BEGIN{printf "%.0f", n*m}')
+		up=0; dn=0; tot=0
+	fi
+fi
+
+[ -n "$exp_txt" ] || [ "$exp" = "0" ] || exp_txt=$(date -d "@$exp" +%Y-%m-%d 2>/dev/null)
+
+used=$((up + dn))
+left=$((tot > used ? tot - used : 0))
+[ -n "${left_only:-}" ] && { left=$left_only; }
+
+printf '{"ok":1,"host":"%s","source":"%s","upload":%s,"download":%s,"used":%s,"total":%s,"left":%s,"expire":%s,"expire_text":"%s","fetched_at":%s}\n' \
+	"$host" "$src" "$up" "$dn" "$used" "$tot" "$left" "$exp" "$exp_txt" "$now" | tee "$CACHE"
+
+rm -f /tmp/subinfo.hdr /tmp/subinfo.body

@@ -1,0 +1,4 @@
+config config
+	option url ''
+	option ua 'clash-verge/v1.7.7'
+	option cache_ttl '600'
