@@ -2,14 +2,28 @@
 # ============================================================
 #  ImmortalWrt 25.12 x86-64 (daed) 本地构建 — .223 专用
 #
-#  ★ 保守策略：只注入「凭据与必要服务配置」，不烘焙整棵 /etc/config
+#  ★ 默认策略 minimal：镜像只管包，配置靠「保留配置刷机」从旧系统还原
 #
-#  第一次尝试烘焙了整个 /etc/config/*，把运行中系统的状态（dnsmasq 的
-#  serversfile、fstab 的 /dev/sda3、docker0 网络、已卸载服务残留的配置）
-#  一起带进镜像，导致刷完不通。这里改为白名单。
+#  背景：烘焙整棵 /etc/config/* 会把运行中系统的状态（dnsmasq 的 serversfile、
+#  fstab 的 /dev/sda3、docker0 网络、已卸载服务残留的配置）一起带进镜像，
+#  刷完直接不通。
+#
+#  而 sysupgrade 的「保留配置」会备份/还原 89 项（来自各包 /lib/upgrade/keep.d）：
+#    /etc/config/**、/etc/daed/wing.db、/etc/acme/**、/etc/nginx/**、
+#    /etc/crontabs/、/etc/rc.local、/etc/dropbear/*、/etc/shadow…
+#  所以烘焙配置对 keep 刷机是无效的（备份在后、会覆盖镜像），还会被镜像里的
+#  uci-defaults 在每次 OTA 后重跑一遍、把已保留的配置又盖掉。
+#
+#  minimal（默认）：
+#    - 不烘任何 /etc/config
+#    - 不注入 wing.db / ACME 证书 / dropbear 主机密钥
+#    - uci-defaults 只保留 98-set-network（仅作「不保留配置」时的网络兜底：
+#      LAN 192.168.2.1/24、eth1-3 桥接、eth0 PPPoE）
+#  full（FIRMWARE_PROFILE=full）：恢复旧的白名单烘焙 + 全部 uci-defaults。
 #
 #  用法:
-#    ./scripts/local-build.sh
+#    ./scripts/local-build.sh                        # minimal（默认）
+#    FIRMWARE_PROFILE=full ./scripts/local-build.sh  # 旧行为：烘配置 + 全量 uci-defaults
 #    SKIP_PULL=1 ./scripts/local-build.sh
 # ============================================================
 set -euo pipefail
@@ -19,6 +33,8 @@ PROFILE="${PROFILE:-generic}"
 EXTRA_IMAGE_NAME="${EXTRA_IMAGE_NAME:-daede}"
 ROOTFS_PARTSIZE="${ROOTFS_PARTSIZE:-1024}"
 PARALLEL="${PARALLEL:-$(nproc 2>/dev/null || echo 4)}"
+# minimal = 只带网络兜底；full = 旧行为（烘白名单配置 + 全部 uci-defaults）
+FIRMWARE_PROFILE="${FIRMWARE_PROFILE:-minimal}"
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SECRETS_DIR="${SECRETS_DIR:-/home/zhoujian/x86build-secrets}"
@@ -33,13 +49,17 @@ IB_DIR="$WORK/imagebuilder"
 FW_VERSION="${FW_VERSION:-$(date +%s)}"
 BUILT_AT="$(date -Iseconds)"
 
-# ★ 白名单：只烘这些 uci 配置（都是「服务凭据/参数」类，不含引导期状态）
-BAKE_CONFIGS="acme ddns daed wechatpush adblock-fast banip ksmbd upnpd vlmcsd wrtbwmon nginx microsocks"
+# ★ 白名单：只在 full 模式下烘这些 uci 配置（服务凭据/参数类）
+if [ "$FIRMWARE_PROFILE" = "full" ]; then
+  BAKE_CONFIGS="acme ddns daed wechatpush adblock-fast banip ksmbd upnpd vlmcsd wrtbwmon nginx microsocks"
+else
+  BAKE_CONFIGS=""
+fi
 
 mkdir -p "$WORK" "$OUT_DIR"
 
 echo "============================================================"
-echo " 本地构建（.223）— 保守策略"
+echo " 本地构建（.223）— profile: $FIRMWARE_PROFILE"
 echo "============================================================"
 echo " 构建号: $FW_VERSION  ($(date -d @"$FW_VERSION" '+%F %T' 2>/dev/null || echo -))"
 echo " 输出:   $OUT_DIR"
@@ -82,6 +102,7 @@ for c in $BAKE_CONFIGS; do
   fi
 done
 
+if [ "$FIRMWARE_PROFILE" = "full" ]; then
 # daed 数据库（订阅/节点/路由，必须烘）
 if [ -f "$SNAP/etc/daed/wing.db" ]; then
   mkdir -p "$WORK/files/etc/daed"
@@ -107,6 +128,9 @@ if [ -d "$SNAP/etc/dropbear" ]; then
   chmod 600 "$WORK/files/etc/dropbear/"* 2>/dev/null || true
   echo "    + dropbear 主机密钥"
 fi
+else
+  echo "    (minimal: 不烘 wing.db / acme / dropbear 主机密钥)"
+fi
 
 # ---------- 5. 注入凭据（PPPoE / root 密码哈希）----------
 echo "[5/9] 注入凭据..."
@@ -121,8 +145,8 @@ for f in "$WORK/files/etc/uci-defaults/"*; do
   [ -n "$PPP_PASS" ] && sed -i "s|__PPPOE_PASS__|$PPP_PASS|g" "$f"
 done
 
-# root 密码用 shadow 哈希（比明文更稳）
-if [ -n "$ROOT_HASH" ]; then
+# root 密码用 shadow 哈希（比明文更稳）—— 仅 full 模式；minimal 下首启由 LuCI 提示设置
+if [ "$FIRMWARE_PROFILE" = "full" ] && [ -n "$ROOT_HASH" ]; then
   cat > "$WORK/files/etc/uci-defaults/99-set-root-password" <<EOF
 #!/bin/sh
 sed -i 's|^root:[^:]*:|root:${ROOT_HASH}:|' /etc/shadow
@@ -134,6 +158,20 @@ echo "    + PPPoE 凭据 (${PPP_USER:-未取到})"
 
 # ---------- 6. 保证 uci-defaults 全部可执行 ----------
 echo "[6/9] uci-defaults 清单..."
+
+# minimal：只留 98-set-network（网络兜底），其余服务初始化脚本不进镜像
+# —— 否则它们会在每次 OTA 后重跑，把「保留配置」还原出来的配置又盖掉
+if [ "$FIRMWARE_PROFILE" != "full" ]; then
+  echo "    minimal: 只保留 98-set-network，删除其余 uci-defaults"
+  for f in "$WORK/files/etc/uci-defaults/"*; do
+    [ -f "$f" ] || continue
+    case "$(basename "$f")" in
+      98-set-network) ;;
+      *) rm -f "$f" ;;
+    esac
+  done
+fi
+
 chmod +x "$WORK/files/etc/uci-defaults/"* 2>/dev/null || true
 ls -1 "$WORK/files/etc/uci-defaults/" | sed 's/^/    /'
 
@@ -215,16 +253,51 @@ echo "  sha256: $SHA256"
 echo "  版本:   $FW_VERSION"
 echo "============================================================"
 
-echo " 自检（未烘的配置应为默认值）:"
 RROOT="$IB_DIR/build_dir/target-x86_64_musl/root-x86"
-for f in usr/sbin/fw-ota etc/fw-version etc/config/ddns etc/config/acme \
-         etc/config/daed etc/daed/wing.db etc/config/wechatpush \
-         etc/config/network etc/config/dhcp etc/config/firewall; do
-  [ -e "$RROOT/$f" ] && echo "   ✅ $f" || echo "   ❌ $f"
-done
-echo ""
-echo " 关键检查："
-echo -n "   network 里 PPPoE 用户: "
-grep -m1 "username" "$RROOT/etc/config/network" 2>/dev/null | awk -F"'" '{print $2}' || echo "(未设置)"
-echo -n "   dhcp 里 serversfile: "
-grep -m1 "serversfile" "$RROOT/etc/config/dhcp" 2>/dev/null || echo "无（正确）"
+echo " 自检（profile: $FIRMWARE_PROFILE）:"
+
+chk_has() { [ -e "$RROOT/$1" ] && echo "   ✅ $1" || echo "   ❌ $1 缺失"; }
+chk_gone() { [ -e "$RROOT/$1" ] && echo "   ❌ $1 不该烘进来" || echo "   ✅ $1 未烘"; }
+
+chk_has usr/sbin/fw-ota
+chk_has etc/fw-version
+chk_has etc/fw-ota.conf
+
+echo -n "   uci-defaults: "
+ls "$RROOT/etc/uci-defaults/" 2>/dev/null | tr '\n' ' '; echo
+
+if [ "$FIRMWARE_PROFILE" = "full" ]; then
+  for f in etc/config/ddns etc/config/acme etc/config/daed etc/daed/wing.db etc/config/wechatpush; do
+    chk_has "$f"
+  done
+else
+  # 注意：acme/daed/ddns/nginx/microsocks 这些包的默认 /etc/config 本来就在，
+  # 要判断「有没有被烘」只能跟快照比内容，不能看文件在不在
+  echo "   烘焙内容（minimal 下必须等于包默认值，不能与快照一致）:"
+  for c in acme ddns daed wechatpush nginx microsocks; do
+    img="$RROOT/etc/config/$c"; snap="$SNAP/etc/config/$c"
+    if [ ! -e "$img" ]; then
+      echo "   ✅ etc/config/$c 不存在"
+    elif [ -e "$snap" ] && cmp -s "$img" "$snap"; then
+      echo "   ❌ etc/config/$c 与快照一致（被烘了）"
+    else
+      echo "   ✅ etc/config/$c 是包默认值"
+    fi
+  done
+  [ -e "$RROOT/etc/daed/wing.db" ] && echo "   ❌ etc/daed/wing.db 被烘了" || echo "   ✅ etc/daed/wing.db 未烘"
+  [ -n "$(ls -A "$RROOT/etc/acme" 2>/dev/null)" ] && echo "   ❌ etc/acme 有内容（证书被烘了）" || echo "   ✅ etc/acme 为空"
+  [ -n "$(ls -A "$RROOT/etc/dropbear" 2>/dev/null)" ] && echo "   ❌ etc/dropbear 有内容（主机密钥被烘了）" || echo "   ✅ etc/dropbear 为空"
+fi
+
+echo " 网络兜底（不保留配置刷机时生效）:"
+if [ -f "$RROOT/etc/uci-defaults/98-set-network" ]; then
+  echo -n "   PPPoE 用户名: "
+  grep -m1 "network.wan.username" "$RROOT/etc/uci-defaults/98-set-network" 2>/dev/null | sed "s/.*='//;s/'//"
+  grep -q "__PPPOE" "$RROOT/etc/uci-defaults/98-set-network" 2>/dev/null \
+    && echo "   ❌ 仍含 __PPPOE__ 占位符（凭据没注入）" \
+    || echo "   ✅ 凭据已注入"
+  echo -n "   LAN: "; grep -m1 "network.lan.ipaddr" "$RROOT/etc/uci-defaults/98-set-network" 2>/dev/null | sed "s/.*='//;s/'//"
+  echo -n "   LAN 端口: "; grep -m1 "dev_lan.ports" "$RROOT/etc/uci-defaults/98-set-network" 2>/dev/null | sed "s/.*='//;s/'//"
+else
+  echo "   ❌ 缺少 98-set-network（不保留配置刷机后将落到 board.d 默认的 192.168.1.1）"
+fi

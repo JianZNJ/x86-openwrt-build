@@ -60,24 +60,53 @@ out/                          产物
 
 ---
 
-## 本地构建
+## 本地构建（.223 / EQ12）
+
+在编译机（`192.168.2.130`，仓库在 `~/x86build`）上执行：
 
 ```bash
-export PPPOE_USER='...'
-export PPPOE_PASS='...'
-export ROOT_PASS='...'
-bash scripts/build.sh
+./scripts/local-build.sh                          # 默认 minimal
+FIRMWARE_PROFILE=full ./scripts/local-build.sh    # 旧行为：烘白名单配置
+SKIP_PULL=1 ./scripts/local-build.sh              # 不拉代码，直接用当前工作区
+FW_VERSION=1800000000 ./scripts/local-build.sh    # 指定版本号（默认 epoch 秒）
+NO_PUBLISH=1 ./scripts/local-build.sh             # 只构建不发布
 ```
 
-依赖：`zstd`、`qemu-utils`、`curl`、`rsync`。
+依赖：`zstd`、`qemu-utils`、`curl`、`rsync`、`mtools`、`sgdisk`。
 
-产物在 `out/`：
+产物发布到 `~/x86build-out/`（由 `x86build-http.service` 在 `192.168.2.130:8080` 提供）：
 
 ```
-immortalwrt-25.12-snapshot-...-daede-x86-64-generic-squashfs-combined-efi.img.gz  ~127 MB
+immortalwrt-25.12-snapshot-...-daede-x86-64-generic-squashfs-combined-efi.img.gz  ~123 MB
 *.manifest        软件包清单
+latest.json       OTA 清单（fw-ota 比对 version）
 sha256sums        校验和
 ```
+
+### 两种 profile
+
+| 内容 | `minimal`（默认） | `full` |
+|---|---|---|
+| `/etc/config/*` 烘焙 | ❌ 不烘 | ✅ 12 个白名单 |
+| `wing.db` / ACME 证书 / dropbear 主机密钥 | ❌ 不烘 | ✅ 烘 |
+| uci-defaults | **只留 `98-set-network`** | 全部 14 个 |
+| root 密码哈希 | ❌ 不设（首启 LuCI 提示设置） | ✅ 烘 `/etc/shadow` 哈希 |
+| 适用 | 日常 OTA，配置靠「保留配置」继承 | 需要开箱即用的整盘新装 |
+
+**为什么默认 minimal**
+
+1. `sysupgrade` 的「保留配置」会备份/还原 **89 项**（来自各包 `/lib/upgrade/keep.d`）：`/etc/config/**`、`/etc/daed/wing.db`、`/etc/acme/**`、`/etc/nginx/**`、`/etc/crontabs/`、`/etc/rc.local`、`/etc/dropbear/*`、`/etc/shadow`…烘焙的配置刷完就被旧配置覆盖，等于白带。
+2. 镜像里的 uci-defaults **每次 OTA 后都会重跑一遍**（它们属于新 rootfs），`99-nginx-setup` 之类会把已还原的 `nginx.conf` / `conf.d/*` 又盖掉。minimal 直接把它们挡在镜像外。
+
+`98-set-network` 是唯一保留的脚本，只在「不保留配置」刷机时兜底：
+
+| 项 | 值 |
+|---|---|
+| LAN | `br-lan` = `eth1 eth2 eth3` → `192.168.2.1/24` |
+| WAN | `eth0` → PPPoE（凭据由构建时注入，占位符 `__PPPOE_USER__` / `__PPPOE_PASS__`） |
+| 其它 | flow offloading 开、IPv6 关 |
+
+> 没有它的话，「不保留配置」刷机后由 board.d 生成默认的 `192.168.1.1` + DHCP WAN，得手动把电脑改到 192.168.1.x 才能登录。
 
 ---
 
