@@ -1,15 +1,17 @@
 #!/bin/sh
-# adblock-fast 属于次要任务：不在 /etc/init.d 的开机顺序里启动，
-# 改为由 /etc/rc.local 延迟到网络就绪之后再起（见镜像里的 rc.local）。
+# adblock-fast 属于次要任务，做三件事降低它对管理面的影响：
 #
-# 同时收紧下载参数：adblock-fast 的清单下载是在持有 rc.common 的 procd 锁
-# （flock）期间进行的，一旦某个源变成黑洞，锁会被长期占用；而 LuCI 加载
-# 会调用 `adblock-fast enabled`，它要抢同一把锁 —— rpcd 是单线程，被阻塞后
-# 所有 LuCI 请求都会超时（Bad Gateway）。
-#   curl_retry        8 → 2   （最坏 9 次尝试变成 3 次）
-#   download_max_time 180 → 60（单次下载硬超时）
-# 最坏持锁时间从 ~27 分钟降到 ~3 分钟。
+# 1) 不进开机顺序（删 S20），改由 /etc/rc.local 在网络与 /mnt/data 都就绪后启动
+# 2) 打开压缩缓存：把生成的规则文件压成 ~3 MB 存到 /mnt/data，开机直接解包复用，
+#    不再重新下载 90 个源（实测冷启动 6 秒、零下载）
+# 3) 收紧下载超时：清单下载是在持有 rc.common 的 procd 锁期间进行的，一旦某个源
+#    变成黑洞，锁会被长期占用；而 LuCI 的 `adblock-fast enabled` 要抢同一把锁，
+#    单线程的 rpcd 被占死后所有 LuCI 请求都会超时（Bad Gateway）。
+#      curl_retry        8 → 2
+#      download_max_time 180 → 60   （最坏持锁 ~27 分钟 → ~3 分钟）
 rm -f /etc/rc.d/S20adblock-fast
+uci -q set adblock-fast.config.compressed_cache='1'
+uci -q set adblock-fast.config.compressed_cache_dir='/mnt/data/adblock-cache'
 uci -q set adblock-fast.config.curl_retry='2'
 uci -q set adblock-fast.config.download_max_time='60'
 uci -q commit adblock-fast

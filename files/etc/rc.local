@@ -15,6 +15,7 @@
 # 单线程的 rpcd 被占死 → 管理页 Bad Gateway。网络就绪后启动只需 2 秒。
 (
   sleep 90
+  mkdir -p /mnt/data/adblock-cache          # 压缩缓存放持久盘，跨刷机保留
   rm -f /etc/rc.d/S20adblock-fast
   /etc/init.d/adblock-fast start >/var/log/adblock-fast-boot.log 2>&1
   rm -f /etc/rc.d/S20adblock-fast
