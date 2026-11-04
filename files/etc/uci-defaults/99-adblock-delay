@@ -19,5 +19,13 @@ uci -q set adblock-fast.config.compressed_cache='1'
 uci -q set adblock-fast.config.compressed_cache_dir='/mnt/data/adblock-cache'
 uci -q set adblock-fast.config.curl_retry='2'
 uci -q set adblock-fast.config.download_max_time='60'
+# procd 等的 WAN 就绪超时：PPPoE 拨号在冷启动时可能超过 60 秒
+uci -q set adblock-fast.config.procd_boot_wan_timeout='180'
+# 清掉已失效的源（adblock.turtlecute.org 实测 HTTP 000）。它每次失败都会写进
+# status_data.errors，而 start() 开头是 `if (prev_errors) action='download'`，
+# 于是每次手动启动都被强制全量重下 —— 缓存等于白做。
+for i in $(uci show adblock-fast | sed -n 's/^adblock-fast\.@file_url\[\([0-9]*\)\]\.url=.https:\/\/adblock\.turtlecute\.org.*/\1/p' | sort -rn); do
+    uci -q delete "adblock-fast.@file_url[$i]"
+done
 uci -q commit adblock-fast
 exit 0

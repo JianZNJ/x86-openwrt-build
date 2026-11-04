@@ -9,14 +9,38 @@
   logger -t wrtbwmon-guard "started: $(pidof wrtbwmon | tr '\n' ' ')"
 ) >/dev/null 2>&1 &
 
-# ADBLOCK-FALLBACK: 兜底。正常情况下 adblock-fast 已由 S96 启动，
-# 这里只是防止它那次启动失败（例如首次开机还没有压缩缓存、网络又没就绪）。
+# ADBLOCK-FALLBACK + ADBLOCK-KEEPCACHE
+# 背景（实测 2026-11-05）：
+#   1. adblock-fast 1.2.4 是 ucode 实现，start(on_boot) 在「没有 gz 也没有 cache」
+#      时直接 return null —— 也就是说没有缓存时 S96 什么也不做，这正是"S96 没跑"的真相。
+#   2. start() 末尾是 create-or-remove：如果从 gz 恢复（test_gzip 已为真），会走
+#      else 分支 remove_gzip，把刚用过的 gz 删掉 —— 缓存因此只生效一次（隔次开机）。
+#   3. 所以兜底不能只看 pidof（一次性脚本跑完就没了），要看产物是否存在；
+#      并且每次启动成功后补写 gz，下次开机才能又走 6 秒的 restore 路径。
 (
-  sleep 120
-  if ! pidof adblock-fast >/dev/null 2>&1; then
+  sleep 150
+  S=/var/run/adblock-fast/dnsmasq.servers
+  GZ=/mnt/data/adblock-cache/adblock-fast.dnsmasq.servers.gz
+
+  if [ -s "$S" ]; then
+    logger -t adblock-fallback "skip: servers 已就绪"
+  elif pidof adblock-fast >/dev/null 2>&1; then
+    logger -t adblock-fallback "skip: 启动进行中"
+  else
     mkdir -p /mnt/data/adblock-cache
     /etc/init.d/adblock-fast start >/var/log/adblock-fast-boot.log 2>&1
     logger -t adblock-fallback "start rc=$? :: $(/etc/init.d/adblock-fast status 2>&1 | head -1)"
+  fi
+
+  if [ -s "$S" ] && [ ! -s "$GZ" ]; then
+    mkdir -p /mnt/data/adblock-cache
+    if gzip < "$S" > "$GZ.tmp" 2>/dev/null; then
+      mv "$GZ.tmp" "$GZ"
+      logger -t adblock-fallback "gz 已补写 $(wc -c < "$GZ") 字节"
+    else
+      rm -f "$GZ.tmp"
+      logger -t adblock-fallback "gz 补写失败"
+    fi
   fi
 ) >/dev/null 2>&1 &
 
