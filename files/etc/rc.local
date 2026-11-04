@@ -9,17 +9,15 @@
   logger -t wrtbwmon-guard "started: $(pidof wrtbwmon | tr '\n' ' ')"
 ) >/dev/null 2>&1 &
 
-# ADBLOCK-DELAY: 去广告是次要任务，等网络完全就绪后再启动。
-# 开机早期 WAN 还没起来时 adblock-fast 会进入重试，期间一直持有
-# rc.common 的 procd 锁；LuCI 的 `adblock-fast enabled` 卡在这把锁上，
-# 单线程的 rpcd 被占死 → 管理页 Bad Gateway。网络就绪后启动只需 2 秒。
+# ADBLOCK-FALLBACK: 兜底。正常情况下 adblock-fast 已由 S96 启动，
+# 这里只是防止它那次启动失败（例如首次开机还没有压缩缓存、网络又没就绪）。
 (
-  sleep 90
-  mkdir -p /mnt/data/adblock-cache          # 压缩缓存放持久盘，跨刷机保留
-  rm -f /etc/rc.d/S20adblock-fast
-  /etc/init.d/adblock-fast start >/var/log/adblock-fast-boot.log 2>&1
-  rm -f /etc/rc.d/S20adblock-fast
-  logger -t adblock-delay "start rc=$? :: $(/etc/init.d/adblock-fast status 2>&1 | head -1)"
+  sleep 120
+  if ! pidof adblock-fast >/dev/null 2>&1; then
+    mkdir -p /mnt/data/adblock-cache
+    /etc/init.d/adblock-fast start >/var/log/adblock-fast-boot.log 2>&1
+    logger -t adblock-fallback "start rc=$? :: $(/etc/init.d/adblock-fast status 2>&1 | head -1)"
+  fi
 ) >/dev/null 2>&1 &
 
 exit 0

@@ -1,15 +1,20 @@
 #!/bin/sh
-# adblock-fast 属于次要任务，做三件事降低它对管理面的影响：
+# adblock-fast 属于次要任务，但必须保持"已启用"状态（否则 LuCI 显示已禁用，
+# 与实际运行不一致）。做法是把它从 S20（早于 network 启动）挪到 S96，
+# 排在 network / firewall / daed / dockerd 之后。
 #
-# 1) 不进开机顺序（删 S20），改由 /etc/rc.local 在网络与 /mnt/data 都就绪后启动
-# 2) 打开压缩缓存：把生成的规则文件压成 ~3 MB 存到 /mnt/data，开机直接解包复用，
-#    不再重新下载 90 个源（实测冷启动 6 秒、零下载）
-# 3) 收紧下载超时：清单下载是在持有 rc.common 的 procd 锁期间进行的，一旦某个源
-#    变成黑洞，锁会被长期占用；而 LuCI 的 `adblock-fast enabled` 要抢同一把锁，
-#    单线程的 rpcd 被占死后所有 LuCI 请求都会超时（Bad Gateway）。
-#      curl_retry        8 → 2
-#      download_max_time 180 → 60   （最坏持锁 ~27 分钟 → ~3 分钟）
+# 另外两项设置用来压缩它对管理面的影响：
+#   compressed_cache + 缓存目录：开机直接解包上次的规则（12MB→3.1MB，实测 6 秒、
+#     零下载），不再每次开机重下 90 个源
+#   curl_retry 8→2、download_max_time 180→60：清单下载是在持有 rc.common 的
+#     procd 锁期间进行的；一旦某个源变黑洞，锁会被长期占用，而 LuCI 的
+#     `adblock-fast enabled` 要抢同一把锁，单线程的 rpcd 被占死 → Bad Gateway。
+#     最坏持锁从 ~27 分钟降到 ~3 分钟
+# rc.common 的 enabled() 是按 START 值找 S<START><name>，所以改 rc.d 名字的同时
+# 必须把 init 脚本里的 START 也改掉，否则 LuCI 仍显示"已禁用"
+sed -i 's/^START=20$/START=96/' /etc/init.d/adblock-fast
 rm -f /etc/rc.d/S20adblock-fast
+ln -sf ../init.d/adblock-fast /etc/rc.d/S96adblock-fast 2>/dev/null
 uci -q set adblock-fast.config.compressed_cache='1'
 uci -q set adblock-fast.config.compressed_cache_dir='/mnt/data/adblock-cache'
 uci -q set adblock-fast.config.curl_retry='2'
