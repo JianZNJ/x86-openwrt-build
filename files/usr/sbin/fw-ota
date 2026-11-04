@@ -9,12 +9,18 @@
 #            "upstream": "..." }
 #
 #  用法:
-#    fw-ota check    检查是否有新版本（只读）
-#    fw-ota update   下载 + 校验 sha256 + 交互确认后刷机
-#    fw-ota force    下载 + 校验后直接刷机
-#    fw-ota start    后台静默下载（供 LuCI 调用）
-#    fw-ota progress 输出进度 JSON
-#    fw-ota version  显示本地版本
+#    fw-ota check                  检查是否有新版本（只读）
+#    fw-ota download               下载 + 校验 sha256，停在 ready
+#    fw-ota install [keep|nokeep] [force]
+#                                  刷写已就绪的固件
+#                                    keep   = 保留配置（默认，不加 -n）
+#                                    nokeep = 全新安装（sysupgrade -n）
+#                                    force  = 跳过镜像格式自检
+#    fw-ota start                  后台静默下载（供 LuCI 调用）
+#    fw-ota progress               输出进度 JSON
+#    fw-ota cancel                 取消下载并清理临时文件
+#    fw-ota update [keep|nokeep]   命令行：下载 → 交互确认 → 刷写
+#    fw-ota version                显示本地版本
 # ============================================================
 set -u
 
@@ -102,6 +108,8 @@ do_fetch() {
     fname=$(json_get "$manifest" file)
     sha=$(json_get "$manifest" sha256)
     size=$(json_get "$manifest" size)
+    built=$(json_get "$manifest" built)
+    upstream=$(json_get "$manifest" upstream)
 
     [ -z "$rv" ] || [ -z "$fname" ] && { log "latest.json 字段不全"; echo "error" > "$WORKDIR/state"; return 2; }
 
@@ -116,8 +124,11 @@ do_fetch() {
     fw="$WORKDIR/firmware.img.gz"
     echo "${size:-0}" > "$WORKDIR/total"
     echo "$rv" > "$WORKDIR/tag"
+    echo "${sha:-}" > "$WORKDIR/sha"
+    echo "${built:-}" > "$WORKDIR/built"
+    echo "${upstream:-}" > "$WORKDIR/upstream"
     echo "downloading" > "$WORKDIR/state"
-    rm -f "$fw"
+    rm -f "$fw" "$WORKDIR/mode"
 
     log "下载固件（内网）…"
     if ! fetch_url "$base/$fname" "$fw"; then
@@ -146,7 +157,40 @@ do_fetch() {
     return 0
 }
 
+# sysupgrade 是否支持 --test（用于刷写前的镜像格式自检）
+image_test_supported() {
+    sysupgrade --help 2>&1 | grep -q -- '--test'
+}
+
+# 镜像自检；失败时把 stderr 打到 stdout 供 UI 展示
+image_check() {
+    fw="$1"
+    if ! image_test_supported; then
+        log "当前 sysupgrade 不支持 --test，跳过镜像自检"
+        return 0
+    fi
+    log "镜像自检中…"
+    out=$(sysupgrade --test "$fw" 2>&1)
+    rc=$?
+    if [ $rc -ne 0 ]; then
+        log "镜像自检失败（rc=$rc）"
+        [ -n "$out" ] && echo "$out"
+        return 1
+    fi
+    log "镜像自检通过"
+    return 0
+}
+
 do_install() {
+    # $1=keep|nokeep（默认 keep）  $2=force（非空则跳过自检）
+    mode="${1:-keep}"
+    force="${2:-}"
+    case "$mode" in
+        keep)   args="" ;;
+        nokeep) args="-n" ;;
+        *)      log "未知模式: $mode（应为 keep 或 nokeep）"; return 1 ;;
+    esac
+
     fw="$WORKDIR/firmware.img.gz"
     st=""
     [ -f "$WORKDIR/state" ] && st=$(cat "$WORKDIR/state" 2>/dev/null)
@@ -155,9 +199,32 @@ do_install() {
         return 1
     fi
     [ -s "$fw" ] || { log "固件文件不存在，请重新下载"; echo "error" > "$WORKDIR/state"; return 1; }
-    log "开始 sysupgrade（保留配置），设备即将重启…"
+
+    if [ "$force" != "force" ]; then
+        if ! image_check "$fw"; then
+            log "拒绝刷写：镜像自检未通过（如需强刷，请加 force 参数）"
+            return 6
+        fi
+    else
+        log "已指定 force，跳过镜像自检"
+    fi
+
+    echo "$mode" > "$WORKDIR/mode"
+    if [ "$mode" = "nokeep" ]; then
+        log "开始 sysupgrade（不保留配置：清除全部设置，恢复出厂），设备即将重启…"
+    else
+        log "开始 sysupgrade（保留配置），设备即将重启…"
+    fi
     echo "installing" > "$WORKDIR/state"
-    sysupgrade "$fw"
+
+    # 刷写前先落盘，避免 sysupgrade 过程中断电导致半写
+    sync
+
+    if [ -n "$args" ]; then
+        sysupgrade "$args" "$fw"
+    else
+        sysupgrade "$fw"
+    fi
 }
 
 do_cancel() {
@@ -174,28 +241,41 @@ do_cancel() {
 }
 
 do_update() {
-    force="${1:-0}"
+    # $1=keep|nokeep（默认 keep）
+    mode="${1:-keep}"
     do_fetch || return $?
     if [ "$(cat "$WORKDIR/state" 2>/dev/null)" = "latest" ]; then
         return 0
     fi
-    if [ "$force" != "1" ]; then
-        tag=$(cat "$WORKDIR/tag" 2>/dev/null)
-        printf "确认刷入版本 %s 并重启？[y/N] " "$tag"
+
+    tag=$(cat "$WORKDIR/tag" 2>/dev/null)
+    printf "确认刷入版本 %s 并重启？[Y/n] " "$tag"
+    read ans
+    case "$ans" in
+        n|N|no|NO) log "已取消"; rm -f "$WORKDIR/firmware.img.gz"; echo "idle" > "$WORKDIR/state"; return 0 ;;
+    esac
+
+    if [ "$mode" = "nokeep" ]; then
+        printf "将【清除全部配置】恢复出厂设置，确认？[y/N] "
         read ans
         case "$ans" in
             y|Y|yes|YES) ;;
-            *) log "已取消"; rm -f "$WORKDIR/firmware.img.gz"; echo "idle" > "$WORKDIR/state"; return 0 ;;
+            *) log "已取消（未刷写）"; return 0 ;;
         esac
     fi
-    do_install
+
+    do_install "$mode"
 }
 
 do_progress() {
-    state="idle"; bytes=0; total=0; tag=""
-    [ -f "$WORKDIR/state" ] && state=$(cat "$WORKDIR/state" 2>/dev/null)
-    [ -f "$WORKDIR/total" ] && total=$(cat "$WORKDIR/total" 2>/dev/null)
-    [ -f "$WORKDIR/tag" ]   && tag=$(cat "$WORKDIR/tag" 2>/dev/null)
+    state="idle"; bytes=0; total=0; tag=""; sha=""; built=""; upstream=""; mode=""
+    [ -f "$WORKDIR/state" ]    && state=$(cat "$WORKDIR/state" 2>/dev/null)
+    [ -f "$WORKDIR/total" ]    && total=$(cat "$WORKDIR/total" 2>/dev/null)
+    [ -f "$WORKDIR/tag" ]      && tag=$(cat "$WORKDIR/tag" 2>/dev/null)
+    [ -f "$WORKDIR/sha" ]      && sha=$(cat "$WORKDIR/sha" 2>/dev/null)
+    [ -f "$WORKDIR/built" ]    && built=$(cat "$WORKDIR/built" 2>/dev/null)
+    [ -f "$WORKDIR/upstream" ] && upstream=$(cat "$WORKDIR/upstream" 2>/dev/null)
+    [ -f "$WORKDIR/mode" ]     && mode=$(cat "$WORKDIR/mode" 2>/dev/null)
     [ -f "$WORKDIR/firmware.img.gz" ] && bytes=$(filesize "$WORKDIR/firmware.img.gz")
 
     running=0
@@ -223,8 +303,8 @@ do_progress() {
         [ "$percent" -gt 100 ] && percent=100
     fi
 
-    printf '{"state":"%s","bytes":%s,"total":%s,"percent":%s,"tag":"%s"}\n' \
-        "$state" "$bytes" "$total" "$percent" "$tag"
+    printf '{"state":"%s","bytes":%s,"total":%s,"percent":%s,"tag":"%s","sha":"%s","built":"%s","upstream":"%s","mode":"%s"}\n' \
+        "$state" "$bytes" "$total" "$percent" "$tag" "$sha" "$built" "$upstream" "$mode"
 }
 
 do_start() {
@@ -236,13 +316,13 @@ do_start() {
 
 case "${1:-check}" in
     check)    do_check; exit $? ;;
-    update)   do_update 0; exit $? ;;
-    force)    do_update 1; exit $? ;;
+    update)   do_update "${2:-keep}"; exit $? ;;
+    force)    do_update "${2:-keep}"; exit $? ;;
     download) do_fetch; exit $? ;;
     start)    do_start; exit 0 ;;
-    install)  do_install; exit $? ;;
+    install)  do_install "${2:-keep}" "${3:-}"; exit $? ;;
     cancel)   do_cancel; exit $? ;;
     progress) do_progress; exit 0 ;;
     version)  echo "本地版本: $(local_ver)"; exit 0 ;;
-    *)        echo "用法: $0 {check|download|install|cancel|start|progress|update|force|version}"; exit 1 ;;
+    *)        echo "用法: $0 {check|download|install [keep|nokeep] [force]|start|progress|cancel|update [keep|nokeep]|version}"; exit 1 ;;
 esac

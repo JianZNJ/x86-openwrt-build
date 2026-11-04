@@ -25,6 +25,15 @@ return view.extend({
 		});
 	},
 
+	formatSize: function(n) {
+		n = parseInt(n) || 0;
+		if (n >= 1048576)
+			return (n / 1048576).toFixed(1) + ' MB';
+		if (n >= 1024)
+			return (n / 1024).toFixed(0) + ' KB';
+		return n + ' B';
+	},
+
 	/* 按钮状态控制 */
 	setButtons: function(p) {
 		var st = p.state || 'idle';
@@ -65,11 +74,13 @@ return view.extend({
 		}
 		else if (st === 'ready') {
 			if (bar) { bar.style.width = '100%'; bar.style.background = '#2fa84f'; }
-			if (txt) txt.textContent = '固件已就绪（' + mb(p.bytes) + ' MB，校验通过）— 请点击「确认刷入并重启」';
+			if (txt) txt.textContent = '版本 ' + (p.tag || '?') + ' 已就绪（' + mb(p.bytes) + ' MB，SHA256 校验通过）— 点击「刷写固件…」选择是否保留配置';
 		}
 		else if (st === 'installing') {
 			if (bar) { bar.style.width = '100%'; bar.style.background = '#e04a4a'; }
-			if (txt) txt.textContent = '正在刷写固件，设备即将重启…';
+			if (txt) txt.textContent = (p.mode === 'nokeep')
+				? '正在刷写（不保留配置），设备即将重启…'
+				: '正在刷写（保留配置），设备即将重启…';
 		}
 		else if (st === 'error') {
 			if (bar) { bar.style.background = '#e04a4a'; }
@@ -130,6 +141,7 @@ return view.extend({
 		});
 	},
 
+	/* 刷写确认对话框：是否刷写 + 是否保留配置 */
 	handleInstall: function() {
 		var self = this;
 		var node = document.getElementById('ota-out');
@@ -139,28 +151,72 @@ return view.extend({
 				node.textContent = '固件尚未就绪，请先下载并等待校验完成。';
 				return;
 			}
-			return ui.showModal(_('确认刷入固件'), [
-				E('p', {}, _('将刷入 %s 并立即重启设备，配置会保留。确认继续？').format(p.tag || '')),
+
+			var keepBox = E('input', { 'type': 'checkbox', 'checked': 'checked', 'id': 'ota-keep' });
+			var warn = E('p', {
+				'class': 'alert-message warning',
+				'style': 'display:none'
+			}, [
+				_('不保留配置 = 清除全部设置并恢复出厂：网络、密码、daed 订阅、证书、DDNS、Docker 配置全部丢失，刷机后需要重新配置。')
+			]);
+
+			keepBox.addEventListener('change', function() {
+				warn.style.display = keepBox.checked ? 'none' : '';
+			});
+
+			var body = [
+				E('p', {}, _('固件已下载并通过 SHA256 校验，下面是本次刷写的目标版本：')),
+				E('ul', { 'style': 'margin:6px 0 10px 0' }, [
+					E('li', {}, [ E('strong', {}, _('版本：')), p.tag || _('未知') ]),
+					p.built ? E('li', {}, [ E('strong', {}, _('构建时间：')), p.built ]) : '',
+					p.upstream ? E('li', {}, [ E('strong', {}, _('上游：')), p.upstream ]) : '',
+					E('li', {}, [ E('strong', {}, _('大小：')), self.formatSize(p.bytes) ]),
+					p.sha ? E('li', { 'style': 'word-break:break-all' }, [ E('strong', {}, 'SHA256：'), p.sha ]) : ''
+				]),
+				E('p', {}, E('label', { 'class': 'btn' }, [
+					keepBox, ' ', _('保留配置（不勾选则清空全部设置，恢复出厂）')
+				])),
+				warn,
+				E('p', { 'class': 'alert-message' }, [
+					_('刷写期间设备会立即重启并中断网络 1–2 分钟，切勿断电。')
+				]),
+				E('hr'),
 				E('div', { 'class': 'right' }, [
-					E('button', {
+					E('a', {
 						'class': 'btn',
-						'click': ui.hideModal
-					}, [ _('取消') ]),
+						'href': L.env.cgi_base + '/cgi-backup',
+						'target': '_blank'
+					}, [ _('先下载配置备份') ]),
+					' ',
+					E('button', { 'class': 'btn', 'click': ui.hideModal }, [ _('取消') ]),
 					' ',
 					E('button', {
-						'class': 'btn cbi-button cbi-button-negative',
+						'class': 'btn cbi-button cbi-button-negative important',
 						'click': function() {
+							var mode = keepBox.checked ? 'keep' : 'nokeep';
 							ui.hideModal();
-							node.textContent = '正在刷写，设备即将重启…';
-							fs.exec('/usr/sbin/fw-ota', [ 'install' ]).then(function(res) {
-								node.textContent = (res.stdout || '') + (res.stderr ? '\n' + res.stderr : '');
+							node.textContent = (mode === 'keep')
+								? '正在刷写（保留配置），设备即将重启…'
+								: '正在刷写（不保留配置），设备即将重启…';
+							document.getElementById('ota-bar-text').textContent = node.textContent;
+
+							fs.exec('/usr/sbin/fw-ota', [ 'install', mode ]).then(function(res) {
+								var out = (res.stdout || '') + (res.stderr ? '\n' + res.stderr : '');
+								node.textContent = out || '已提交刷写请求。';
+								if (res.code === 6) {
+									ui.addNotification(null, E('p', _('镜像自检未通过，已拒绝刷写，详见输出。')));
+									return self.fetchProgress().then(function(q) { self.renderProgress(q); });
+								}
+								ui.awaitReconnect(window.location.host);
 							}).catch(function(e) {
 								node.textContent = '刷写失败: ' + e.message;
 							});
 						}
-					}, [ _('确认刷入') ])
+					}, [ _('确认刷入并重启') ])
 				])
-			]);
+			];
+
+			ui.showModal(_('刷写固件？'), body);
 		});
 	},
 
@@ -183,7 +239,7 @@ return view.extend({
 		return E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, _('固件 OTA 升级')),
 			E('div', { 'class': 'cbi-map-descr' },
-				_('从内网构建服务器（192.168.2.130）下载固件。流程：下载 → 校验 SHA256 → 确认后刷写并重启。配置会保留。')),
+				_('从内网构建服务器（192.168.2.130）下载固件。流程：下载 → 校验 SHA256 → 确认刷写（可选择是否保留配置）→ 重启。')),
 
 			E('div', { 'class': 'cbi-section' }, [
 				E('p', {}, [ E('strong', {}, _('当前版本：')), ver ]),
@@ -225,7 +281,7 @@ return view.extend({
 						'id': 'ota-btn-install',
 						'class': 'btn cbi-button cbi-button-apply',
 						'click': ui.createHandlerFn(self, 'handleInstall')
-					}, [ _('确认刷入并重启') ])
+					}, [ _('刷写固件…') ])
 				])
 			]),
 
