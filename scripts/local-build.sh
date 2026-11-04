@@ -202,6 +202,7 @@ if [ "$FIRMWARE_PROFILE" != "full" ]; then
     [ -f "$f" ] || continue
     case "$(basename "$f")" in
       98-set-network) ;;
+      99-adblock-delay) ;;   # 取消 adblock 早启 + 收紧下载超时
       *) rm -f "$f" ;;
     esac
   done

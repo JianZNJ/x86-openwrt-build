@@ -1,0 +1,24 @@
+# Put your custom commands here that should be executed once
+# the system init finished. By default this file does nothing.
+
+# WRTBWMON-GUARD: 单实例启动（绕过 procd）
+(
+  sleep 25
+  pidof wrtbwmon >/dev/null 2>&1 || \
+    /usr/sbin/wrtbwmon -46 -f /tmp/usage.db -p /tmp/usage.htm -u /etc/wrtbwmon.user -d
+  logger -t wrtbwmon-guard "started: $(pidof wrtbwmon | tr '\n' ' ')"
+) >/dev/null 2>&1 &
+
+# ADBLOCK-DELAY: 去广告是次要任务，等网络完全就绪后再启动。
+# 开机早期 WAN 还没起来时 adblock-fast 会进入重试，期间一直持有
+# rc.common 的 procd 锁；LuCI 的 `adblock-fast enabled` 卡在这把锁上，
+# 单线程的 rpcd 被占死 → 管理页 Bad Gateway。网络就绪后启动只需 2 秒。
+(
+  sleep 90
+  rm -f /etc/rc.d/S20adblock-fast
+  /etc/init.d/adblock-fast start >/var/log/adblock-fast-boot.log 2>&1
+  rm -f /etc/rc.d/S20adblock-fast
+  logger -t adblock-delay "start rc=$? :: $(/etc/init.d/adblock-fast status 2>&1 | head -1)"
+) >/dev/null 2>&1 &
+
+exit 0
