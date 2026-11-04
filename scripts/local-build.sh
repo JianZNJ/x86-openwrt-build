@@ -209,6 +209,9 @@ if [ "$FIRMWARE_PROFILE" != "full" ]; then
 fi
 
 chmod +x "$WORK/files/etc/uci-defaults/"* 2>/dev/null || true
+# 防止仓库里丢执行位（曾经因为 fw-ota 变成 644，刷完机 OTA 直接 Permission denied）
+chmod 755 "$WORK/files/usr/sbin/"* 2>/dev/null || true
+[ -f "$WORK/files/etc/rc.local" ] && chmod 755 "$WORK/files/etc/rc.local"
 ls -1 "$WORK/files/etc/uci-defaults/" | sed 's/^/    /'
 
 # ---------- 7. 版本戳 ----------
