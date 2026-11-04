@@ -156,6 +156,41 @@ EOF
 fi
 echo "    + PPPoE 凭据 (${PPP_USER:-未取到})"
 
+# ---------- 5b. GEO 数据（每次构建取最新）----------
+# 地址与 LuCI「服务 → daede → 更新」页一致（/usr/share/luci-app-daede/update-geo.sh）：
+#   https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/{geoip,geosite}.dat
+echo "[5b/9] 下载 GEO 数据（Loyalsoldier 最新）..."
+GEO_BASE="${GEO_BASE:-https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download}"
+GEO_CACHE="$WORK/geo-cache"
+mkdir -p "$GEO_CACHE"
+for g in geoip geosite; do
+  dst="$GEO_CACHE/$g.dat"
+  if curl -fsSL --retry 3 --retry-delay 5 --connect-timeout 15 --max-time 300 \
+       -o "$dst.new" "$GEO_BASE/$g.dat" 2>/dev/null; then
+    size=$(wc -c < "$dst.new")
+    magic=$(od -An -tx1 -N1 "$dst.new" | tr -d ' \n')
+    if [ "$size" -gt 1024 ] && [ "$magic" = "0a" ]; then
+      mv "$dst.new" "$dst"
+      echo "    $g.dat  ${size} 字节（新下载）"
+    else
+      rm -f "$dst.new"
+      echo "    ⚠️ $g.dat 校验失败（size=$size magic=$magic），回退缓存"
+    fi
+  else
+    echo "    ⚠️ $g.dat 下载失败，回退缓存"
+  fi
+  [ -s "$dst" ] || { echo "❌ 没有可用的 $g.dat（下载失败且无缓存）"; exit 1; }
+done
+
+# 两处放同一份：/usr/share/v2ray 是 daede 页面认的数据路径（它靠 mtime/size 判断更新完成），
+# /etc/daed 是 daed 的搜索路径 —— 后两者用软链接，避免镜像里多存 28 MB
+mkdir -p "$WORK/files/usr/share/v2ray" "$WORK/files/etc/daed"
+cp -f "$GEO_CACHE/geoip.dat"   "$WORK/files/usr/share/v2ray/geoip.dat"
+cp -f "$GEO_CACHE/geosite.dat" "$WORK/files/usr/share/v2ray/geosite.dat"
+ln -sf /usr/share/v2ray/geoip.dat   "$WORK/files/etc/daed/geoip.dat"
+ln -sf /usr/share/v2ray/geosite.dat "$WORK/files/etc/daed/geosite.dat"
+echo "    → /usr/share/v2ray/*.dat + /etc/daed/*.dat(软链)"
+
 # ---------- 6. 保证 uci-defaults 全部可执行 ----------
 echo "[6/9] uci-defaults 清单..."
 
@@ -167,6 +202,7 @@ if [ "$FIRMWARE_PROFILE" != "full" ]; then
     [ -f "$f" ] || continue
     case "$(basename "$f")" in
       98-set-network) ;;
+      99-adblock-delay) ;;   # 取消 adblock 早启，避免锁泄漏把 rpcd 卡死
       *) rm -f "$f" ;;
     esac
   done
@@ -262,6 +298,22 @@ chk_gone() { [ -e "$RROOT/$1" ] && echo "   ❌ $1 不该烘进来" || echo "   
 chk_has usr/sbin/fw-ota
 chk_has etc/fw-version
 chk_has etc/fw-ota.conf
+
+echo "   GEO 数据:"
+for g in geoip geosite; do
+  if [ -s "$RROOT/usr/share/v2ray/$g.dat" ]; then
+    echo "     ✅ usr/share/v2ray/$g.dat ($(wc -c < "$RROOT/usr/share/v2ray/$g.dat") 字节)"
+  else
+    echo "     ❌ usr/share/v2ray/$g.dat 缺失"
+  fi
+  if [ -L "$RROOT/etc/daed/$g.dat" ]; then
+    echo "     ✅ etc/daed/$g.dat → $(readlink "$RROOT/etc/daed/$g.dat")"
+  elif [ -s "$RROOT/etc/daed/$g.dat" ]; then
+    echo "     ⚠️ etc/daed/$g.dat 是实体文件（非软链）"
+  else
+    echo "     ❌ etc/daed/$g.dat 缺失"
+  fi
+done
 
 echo -n "   uci-defaults: "
 ls "$RROOT/etc/uci-defaults/" 2>/dev/null | tr '\n' ' '; echo

@@ -1,0 +1,11 @@
+#!/bin/sh
+# 取消 adblock-fast 的开机早启（S20）
+#
+# 背景：adblock-fast 的 start 会通过 rc.common 拿 fd 1000 的排他锁；开机早期网络
+# 还没通时 start 会卡住，此时 procd fork 出的 dockerd 会继承该 fd 并永久持锁。
+# 之后任何 `adblock-fast enabled/status` 调用都会阻塞在 flock 上 → rpcd 是单线程，
+# 被占死 → 所有 LuCI 请求卡住，uhttpd 返回 Bad Gateway。
+#
+# 实际启动交给 /etc/rc.local 里延迟 90 秒的那段（见镜像里的 rc.local）。
+rm -f /etc/rc.d/S20adblock-fast
+exit 0
