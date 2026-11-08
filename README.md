@@ -23,21 +23,12 @@ ImmortalWrt **25.12-SNAPSHOT** x86-64 固件，基于 **ImageBuilder** 快速构
 
 ```
 .github/workflows/x86.yml     GitHub Actions 构建流水线
-config/packages.txt           96 个软件包
+config/packages.txt           109 个软件包（与本地路由实装一致）
 apks/                         第三方预编译 APK（feed 中没有的）
-  lucky / luci-app-lucky
   wrtbwmon / luci-app-wrtbwmon
   luci-app-wechatpush（Server酱）
 files/etc/uci-defaults/       首次启动配置脚本
-  98-set-network              LAN/WAN/PPPoE/flow offloading/IPv6
-  99-set-root-password        root 密码
-  99-daede-init               daed 数据目录 + 启用
-  99-wrtbwmon-guard           wrtbwmon 单实例修复
-  99-adblock-tune             adblock-fast 列表 + 超时 + 定时
-  99-banip-sources            banip 4 个黑名单源 + 定时
-  99-firewall-4443            Lucky 端口放行
-  99-docker-data-root         Docker 数据根 → /mnt/data
-files/etc/sysctl.d/            nlbwmon 缓冲修复
+  98-set-network              只把 LAN 改成 192.168.2.1，其余默认
 files/usr/sbin/fw-ota           OTA 主脚本
 files/www/.../view/fw-ota.js   OTA LuCI 界面
 files/usr/share/luci/menu.d    OTA 菜单
@@ -50,13 +41,7 @@ out/                          产物
 
 ## GitHub Secrets
 
-| Secret | 用途 |
-|--------|------|
-| `PPPOE_USER` | 宽带账号 |
-| `PPPOE_PASS` | 宽带密码 |
-| `ROOT_PASS`  | root 密码 |
-
-未设置时使用占位值（`pppoe` / `pppoe` / `openwrt`），首次启动后需手动改。
+**已不再需要任何 Secret。** 2026-11-08 起镜像不注入任何凭据：PPPoE 账号、root 密码都要在装好之后手动设置（或由「保留配置」从旧系统继承）。
 
 ---
 
@@ -83,30 +68,19 @@ latest.json       OTA 清单（fw-ota 比对 version）
 sha256sums        校验和
 ```
 
-### 两种 profile
+### 唯一策略：只改管理地址（2026-11-08 起）
 
-| 内容 | `minimal`（默认） | `full` |
-|---|---|---|
-| `/etc/config/*` 烘焙 | ❌ 不烘 | ✅ 12 个白名单 |
-| `wing.db` / ACME 证书 / dropbear 主机密钥 | ❌ 不烘 | ✅ 烘 |
-| uci-defaults | **只留 `98-set-network`** | 全部 14 个 |
-| root 密码哈希 | ❌ 不设（首启 LuCI 提示设置） | ✅ 烘 `/etc/shadow` 哈希 |
-| 适用 | 日常 OTA，配置靠「保留配置」继承 | 需要开箱即用的整盘新装 |
+镜像里只做一件事：把 LAN 从 `192.168.1.1` 改成 `192.168.2.1/24`（`files/etc/uci-defaults/98-set-network`），其余全部保持软件默认：
 
-**为什么默认 minimal**
+- ❌ 不烘任何 `/etc/config/*`（acme / ddns / daed / nginx / microsocks / banip / adblock-fast / upnpd / vlmcsd / wrtbwmon / wechatpush 一律用包默认值）
+- ❌ 不烘 `wing.db`、ACME 证书、dropbear 主机密钥、root 密码哈希、PPPoE 凭据
+- ❌ 不配桥接 / PPPoE / IPv6 / flow offloading / 防火墙 4443 / Docker 数据目录 / rc.local 兜底
+- ✅ 只补 GEO 数据（`/usr/share/v2ray/{geoip,geosite}.dat` + `/etc/daed/*` 软链），这是 daed 必须有的数据文件，不是配置
+- ✅ 保留 fw-ota（脚本 + LuCI 页 + `/etc/fw-ota.conf`，指向 `192.168.2.130:8080`）
 
-1. `sysupgrade` 的「保留配置」会备份/还原 **89 项**（来自各包 `/lib/upgrade/keep.d`）：`/etc/config/**`、`/etc/daed/wing.db`、`/etc/acme/**`、`/etc/nginx/**`、`/etc/crontabs/`、`/etc/rc.local`、`/etc/dropbear/*`、`/etc/shadow`…烘焙的配置刷完就被旧配置覆盖，等于白带。
-2. 镜像里的 uci-defaults **每次 OTA 后都会重跑一遍**（它们属于新 rootfs），`99-nginx-setup` 之类会把已还原的 `nginx.conf` / `conf.d/*` 又盖掉。minimal 直接把它们挡在镜像外。
+`98-set-network` 只是「不保留配置」刷机时的地址兜底；DHCP 池会跟着 LAN 网段自动变成 `192.168.2.100–249`，不用另配。
 
-`98-set-network` 是唯一保留的脚本，只在「不保留配置」刷机时兜底：
-
-| 项 | 值 |
-|---|---|
-| LAN | `br-lan` = `eth1 eth2 eth3` → `192.168.2.1/24` |
-| WAN | `eth0` → PPPoE（凭据由构建时注入，占位符 `__PPPOE_USER__` / `__PPPOE_PASS__`） |
-| 其它 | flow offloading 开、IPv6 关 |
-
-> 没有它的话，「不保留配置」刷机后由 board.d 生成默认的 `192.168.1.1` + DHCP WAN，得手动把电脑改到 192.168.1.x 才能登录。
+构建也不再依赖 `~/x86build-secrets/` 快照——`local-build.sh` 现在没有快照也能直接跑。
 
 ---
 

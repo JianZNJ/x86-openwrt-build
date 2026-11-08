@@ -36,10 +36,6 @@ jobs:
           sudo apt-get install -y -qq zstd qemu-utils rsync curl
 
       - name: 构建固件
-        env:
-          PPPOE_USER: ${{ secrets.PPPOE_USER }}
-          PPPOE_PASS: ${{ secrets.PPPOE_PASS }}
-          ROOT_PASS:  ${{ secrets.ROOT_PASS }}
         run: |
           chmod +x scripts/build.sh
           bash scripts/build.sh

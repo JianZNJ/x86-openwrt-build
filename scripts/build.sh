@@ -15,11 +15,6 @@ PARALLEL="${PARALLEL:-$(nproc 2>/dev/null || echo 4)}"
 
 IB_URL="${IB_URL:-https://downloads.immortalwrt.org/releases/${VERSION}/targets/x86/64/immortalwrt-imagebuilder-${VERSION}-x86-64.Linux-x86_64.tar.zst}"
 
-# 凭据（GitHub Secrets 注入；本地构建可直接 export）
-PPPOE_USER="${PPPOE_USER:-pppoe}"
-PPPOE_PASS="${PPPOE_PASS:-pppoe}"
-ROOT_PASS="${ROOT_PASS:-openwrt}"
-
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 IB_DIR="$WORK/imagebuilder"
 IB_ARCHIVE="$WORK/imagebuilder.tar.zst"
@@ -48,22 +43,10 @@ rm -rf "$IB_DIR"
 mkdir -p "$IB_DIR"
 tar --use-compress-program=unzstd -xf "$IB_ARCHIVE" -C "$IB_DIR" --strip-components=1
 
-# ---------- 3. 准备 files 覆盖层（注入凭据） ----------
+# ---------- 3. 准备 files 覆盖层 ----------
 echo "[3/6] 准备 files 覆盖层..."
 rm -rf "$WORK/files"
 cp -a "$ROOT_DIR/files" "$WORK/files"
-
-subst() {
-  # $1=文件  $2=占位符  $3=值
-  sed -i "s|$2|$3|g" "$1"
-}
-for f in "$WORK/files/etc/uci-defaults/"*; do
-  [ -f "$f" ] || continue
-  subst "$f" "__PPPOE_USER__" "$PPPOE_USER"
-  subst "$f" "__PPPOE_PASS__" "$PPPOE_PASS"
-  subst "$f" "__ROOT_PASS__"  "$ROOT_PASS"
-done
-[ -n "${WG_SRV_PRIV:-}" ] && echo "  (未使用 WireGuard 自动化)"
 
 chmod +x "$WORK/files/etc/uci-defaults/"* 2>/dev/null || true
 
@@ -125,24 +108,14 @@ if [ -f "$OUT/sha256sums" ]; then
   ( cd "$OUT" && sha256sum -c sha256sums --ignore-missing 2>&1 | tail -5 ) || true
 fi
 
-# ---------- 7. 验证凭据已注入 ----------
-echo "[7/7] 验证凭据注入..."
+# ---------- 7. 验证网络兜底 ----------
+echo "[7/7] 验证网络兜底..."
 CHK="$IB_DIR/build_dir/target-x86_64_musl/root-x86/etc/uci-defaults/98-set-network"
 if [ -f "$CHK" ]; then
-  if grep -q '__PPPOE_USER__' "$CHK"; then
-    echo "  ❌ 凭据未注入：占位符仍存在（请检查 Secrets）"
-    exit 1
-  fi
-  echo "  ✅ PPPoE 凭据已注入"
-  grep -c "option\|uci set network.wan" "$CHK" >/dev/null 2>&1 || true
+  echo "  ✅ 98-set-network 存在"
+  grep -q "network.lan.ipaddr='192.168.2.1'" "$CHK" && echo "  ✅ LAN 192.168.2.1" || echo "  ❌ LAN 地址不对"
 else
   echo "  ⚠️ 未找到 staging rootfs，跳过验证"
-fi
-
-CHKPW="$IB_DIR/build_dir/target-x86_64_musl/root-x86/etc/uci-defaults/99-set-root-password"
-if [ -f "$CHKPW" ]; then
-  grep -q '__ROOT_PASS__' "$CHKPW" && { echo "  ❌ root 密码未注入"; exit 1; }
-  echo "  ✅ root 密码已注入"
 fi
 
 # ---------- 8. 校验 daed 关键包 ----------
